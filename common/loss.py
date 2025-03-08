@@ -58,12 +58,18 @@ def p_mpjpe(predicted, target):
 
     a = tr * normX / normY # Scale
     t = muX - a*np.matmul(muY, R) # Translation
+
+    mean_R = np.mean(R, axis=0)
     
     # Perform rigid transformation on the input
     predicted_aligned = a*np.matmul(predicted, R) + t
     
+    print(np.mean(a))
+    print(np.mean(R, axis=0))
+    print(np.mean(t, axis=0))
+
     # Return MPJPE
-    return np.mean(np.linalg.norm(predicted_aligned - target, axis=len(target.shape)-1))
+    return np.mean(np.linalg.norm(predicted_aligned - target, axis=len(target.shape)-1)), mean_R
     
 def n_mpjpe(predicted, target):
     """

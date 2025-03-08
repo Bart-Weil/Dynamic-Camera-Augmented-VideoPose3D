@@ -166,7 +166,8 @@ if __name__ == '__main__':
     print('Saving...')
     metadata = {
         'num_joints': dataset.skeleton().num_joints(),
-        'keypoints_symmetry': [dataset.skeleton().joints_left(), dataset.skeleton().joints_right()]
+        'keypoints_symmetry': [dataset.skeleton().joints_left(), dataset.skeleton().joints_right()],
+        'layout_name': 'h36m'
     }
     np.savez_compressed(output_filename_2d, positions_2d=output_2d_poses, metadata=metadata)
     

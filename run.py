@@ -7,6 +7,7 @@
 
 import numpy as np
 
+import pickle
 from common.arguments import parse_args
 import torch
 
@@ -42,11 +43,16 @@ if args.dataset == 'h36m':
 elif args.dataset.startswith('humaneva'):
     from common.humaneva_dataset import HumanEvaDataset
     dataset = HumanEvaDataset(dataset_path)
+elif args.dataset.startswith('CMU'):
+    from common.CMUMocapDataset import CMUMocapDataset
+    dataset = CMUMocapDataset(dataset_path)
 elif args.dataset.startswith('custom'):
     from common.custom_dataset import CustomDataset
     dataset = CustomDataset('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
 else:
     raise KeyError('Invalid dataset')
+
+import numpy as np
 
 print('Preparing data...')
 for subject in dataset.subjects():
@@ -54,12 +60,17 @@ for subject in dataset.subjects():
         anim = dataset[subject][action]
         
         if 'positions' in anim:
-            positions_3d = []
-            for cam in anim['cameras']:
-                pos_3d = world_to_camera(anim['positions'], R=cam['orientation'], t=cam['translation'])
+            if type(dataset) == CMUMocapDataset:
+                pos_3d = anim['positions']
                 pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
-                positions_3d.append(pos_3d)
-            anim['positions_3d'] = positions_3d
+                anim['positions_3d'] = [pos_3d]
+            else:
+                positions_3d = []
+                for cam in anim['cameras']:
+                    pos_3d = world_to_camera(anim['positions'], R=cam['orientation'], t=cam['translation'])
+                    pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                    positions_3d.append(pos_3d)
+                anim['positions_3d'] = positions_3d
 
 print('Loading 2D detections...')
 keypoints = np.load('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz', allow_pickle=True)
@@ -76,25 +87,32 @@ for subject in dataset.subjects():
         if 'positions_3d' not in dataset[subject][action]:
             continue
             
-        for cam_idx in range(len(keypoints[subject][action])):
-            
-            # We check for >= instead of == because some videos in H3.6M contain extra frames
-            mocap_length = dataset[subject][action]['positions_3d'][cam_idx].shape[0]
-            assert keypoints[subject][action][cam_idx].shape[0] >= mocap_length
-            
-            if keypoints[subject][action][cam_idx].shape[0] > mocap_length:
-                # Shorten sequence
-                keypoints[subject][action][cam_idx] = keypoints[subject][action][cam_idx][:mocap_length]
+        if type(dataset) != CMUMocapDataset:
+            for cam_idx in range(len(keypoints[subject][action])):
+                
+                # We check for >= instead of == because some videos in H3.6M contain extra frames
+                mocap_length = dataset[subject][action]['positions_3d'][cam_idx].shape[0]
+                assert keypoints[subject][action][cam_idx].shape[0] >= mocap_length
+                
+                if keypoints[subject][action][cam_idx].shape[0] > mocap_length:
+                    # Shorten sequence
+                    keypoints[subject][action][cam_idx] = keypoints[subject][action][cam_idx][:mocap_length]
 
-        assert len(keypoints[subject][action]) == len(dataset[subject][action]['positions_3d'])
+            assert len(keypoints[subject][action]) == len(dataset[subject][action]['positions_3d'])
         
 for subject in keypoints.keys():
     for action in keypoints[subject]:
-        for cam_idx, kps in enumerate(keypoints[subject][action]):
-            # Normalize camera frame
-            cam = dataset.cameras()[subject][cam_idx]
+        if type(dataset) == CMUMocapDataset:
+            kps = keypoints[subject][action]
+            cam = dataset.cameras()[subject][action][0]
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=cam['res_w'], h=cam['res_h'])
-            keypoints[subject][action][cam_idx] = kps
+            keypoints[subject][action] = [kps]
+        else:
+            for cam_idx, kps in enumerate(keypoints[subject][action]):
+                # Normalize camera frame
+                cam = dataset.cameras()[subject][cam_idx]
+                kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=cam['res_w'], h=cam['res_h'])
+                keypoints[subject][action][cam_idx] = kps
 
 subjects_train = args.subjects_train.split(',')
 subjects_semi = [] if not args.subjects_unlabeled else args.subjects_unlabeled.split(',')
@@ -127,11 +145,17 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
                 out_poses_2d.append(poses_2d[i])
                 
             if subject in dataset.cameras():
-                cams = dataset.cameras()[subject]
-                assert len(cams) == len(poses_2d), 'Camera count mismatch'
-                for cam in cams:
+                if type(dataset) == CMUMocapDataset:
+                    cam = dataset.cameras()[subject][action][0]
+
                     if 'intrinsic' in cam:
                         out_camera_params.append(cam['intrinsic'])
+                else:
+                    cams = dataset.cameras()[subject]
+                    assert len(cams) == len(poses_2d), 'Camera count mismatch'
+                    for cam in cams:
+                        if 'intrinsic' in cam:
+                            out_camera_params.append(cam['intrinsic'])
                 
             if parse_3d_poses and 'positions_3d' in dataset[subject][action]:
                 poses_3d = dataset[subject][action]['positions_3d']
@@ -167,6 +191,7 @@ if action_filter is not None:
     print('Selected actions:', action_filter)
     
 cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_test, action_filter)
+print("cams", cameras_valid)
 
 filter_widths = [int(x) for x in args.architecture.split(',')]
 if not args.disable_optimizations and not args.dense and args.stride == 1:
@@ -204,7 +229,7 @@ if torch.cuda.is_available():
 if args.resume or args.evaluate:
     chk_filename = os.path.join(args.checkpoint, args.resume if args.resume else args.evaluate)
     print('Loading checkpoint', chk_filename)
-    checkpoint = torch.load(chk_filename, map_location=lambda storage, loc: storage)
+    checkpoint = torch.load(chk_filename, map_location=lambda storage, loc: storage, weights_only=False)
     print('This model was trained for {} epochs'.format(checkpoint['epoch']))
     model_pos_train.load_state_dict(checkpoint['model_pos'])
     model_pos.load_state_dict(checkpoint['model_pos'])
@@ -216,10 +241,10 @@ if args.resume or args.evaluate:
                             dense=args.dense)
         if torch.cuda.is_available():
             model_traj = model_traj.cuda()
-        model_traj.load_state_dict(checkpoint['model_traj'])
+        #model_traj.load_state_dict(checkpoint['model_traj'])
+        model_traj = None
     else:
         model_traj = None
-        
     
 test_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
                                     pad=pad, causal_shift=causal_shift, augment=False,
@@ -660,7 +685,9 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
         else:
             model_traj.eval()
         N = 0
-        for _, batch, batch_2d in test_generator.next_epoch():
+        Rs = []
+        for cams, batch, batch_2d in test_generator.next_epoch():
+            print(cams)
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
             if torch.cuda.is_available():
                 inputs_2d = inputs_2d.cuda()
@@ -698,11 +725,16 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             inputs = inputs_3d.cpu().numpy().reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1])
             predicted_3d_pos = predicted_3d_pos.cpu().numpy().reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1])
 
-            epoch_loss_3d_pos_procrustes += inputs_3d.shape[0]*inputs_3d.shape[1] * p_mpjpe(predicted_3d_pos, inputs)
+            p_mpje_loss, mean_R = p_mpjpe(predicted_3d_pos, inputs)
+            epoch_loss_3d_pos_procrustes += inputs_3d.shape[0]*inputs_3d.shape[1] * p_mpje_loss
 
             # Compute velocity error
             epoch_loss_3d_vel += inputs_3d.shape[0]*inputs_3d.shape[1] * mean_velocity_error(predicted_3d_pos, inputs)
-            
+
+            Rs.append(mean_R)
+    
+    Rs = np.array(Rs)
+    action_mean_R = np.mean(Rs, axis=0)
     if action is None:
         print('----------')
     else:
@@ -718,12 +750,11 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     print('Velocity Error (MPJVE):', ev, 'mm')
     print('----------')
 
-    return e1, e2, e3, ev
+    return e1, e2, e3, ev, action_mean_R
 
 
 if args.render:
     print('Rendering...')
-    
     input_keypoints = keypoints[args.viz_subject][args.viz_action][args.viz_camera].copy()
     ground_truth = None
     if args.viz_subject in dataset.subjects() and args.viz_action in dataset[args.viz_subject]:
@@ -753,10 +784,27 @@ if args.render:
             prediction += trajectory
         
         # Invert camera transformation
-        cam = dataset.cameras()[args.viz_subject][args.viz_camera]
+        cam = dataset.cameras()[args.viz_subject][args.viz_action]
         if ground_truth is not None:
-            prediction = camera_to_world(prediction, R=cam['orientation'], t=cam['translation'])
-            ground_truth = camera_to_world(ground_truth, R=cam['orientation'], t=cam['translation'])
+            prediction_frames = list(prediction)
+            gt_frames = list(ground_truth)
+            world_prediction_frames = []
+            world_gt_frames = []
+            for i in range(len(prediction_frames)):#
+                prediction_frame = prediction_frames[i]
+                gt_frame = gt_frames[i]
+
+                prediction_frame[:, 1] = -prediction_frame[:, 1]
+                gt_frame[:, 1] = -gt_frame[:, 1]
+
+                world_prediction = (prediction_frames[i] @ cam[i]['orientation']) + cam[i]['translation']
+                world_gt = (gt_frames[i] @ cam[i]['orientation']) + cam[i]['translation']
+
+                world_prediction_frames.append(world_prediction)
+                world_gt_frames.append(world_gt)
+
+            prediction = np.array(world_prediction_frames)
+            ground_truth = np.array(world_gt_frames)
         else:
             # If the ground truth is not available, take the camera extrinsic params from a random subject.
             # They are almost the same, and anyway, we only need this for visualization purposes.
@@ -772,13 +820,14 @@ if args.render:
         if ground_truth is not None and not args.viz_no_ground_truth:
             anim_output['Ground truth'] = ground_truth
         
-        input_keypoints = image_coordinates(input_keypoints[..., :2], w=cam['res_w'], h=cam['res_h'])
+        print(input_keypoints.shape)
+        input_keypoints = image_coordinates(input_keypoints[..., :2], w=1280, h=720)
         
         from common.visualization import render_animation
         render_animation(input_keypoints, keypoints_metadata, anim_output,
-                         dataset.skeleton(), dataset.fps(), args.viz_bitrate, cam['azimuth'], args.viz_output,
+                         dataset.skeleton(), dataset.fps(), args.viz_bitrate, cam[0]['azimuth'], args.viz_output,
                          limit=args.viz_limit, downsample=args.viz_downsample, size=args.viz_size,
-                         input_video_path=args.viz_video, viewport=(cam['res_w'], cam['res_h']),
+                         input_video_path=args.viz_video, viewport=(cam[0]['res_w'], cam[0]['res_h']),
                          input_video_skip=args.viz_skip)
     
 else:
@@ -827,6 +876,7 @@ else:
         errors_p2 = []
         errors_p3 = []
         errors_vel = []
+        Rs = []
 
         for action_key in actions.keys():
             if action_filter is not None:
@@ -842,16 +892,20 @@ else:
             gen = UnchunkedGenerator(None, poses_act, poses_2d_act,
                                      pad=pad, causal_shift=causal_shift, augment=args.test_time_augmentation,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-            e1, e2, e3, ev = evaluate(gen, action_key)
+            e1, e2, e3, ev, R = evaluate(gen, action_key)
             errors_p1.append(e1)
             errors_p2.append(e2)
             errors_p3.append(e3)
             errors_vel.append(ev)
+            Rs.append(R)
 
         print('Protocol #1   (MPJPE) action-wise average:', round(np.mean(errors_p1), 1), 'mm')
         print('Protocol #2 (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
         print('Protocol #3 (N-MPJPE) action-wise average:', round(np.mean(errors_p3), 1), 'mm')
         print('Velocity      (MPJVE) action-wise average:', round(np.mean(errors_vel), 2), 'mm')
+        
+        print(Rs)
+        Rs = np.array(Rs)
 
     if not args.by_subject:
         run_evaluation(all_actions, action_filter)
