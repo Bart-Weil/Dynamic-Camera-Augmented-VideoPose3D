@@ -28,34 +28,6 @@ from common.utils import wrap
 output_filename = 'data_3d_CMU'
 output_filename_2d = 'data_2d_CMU_gt'
 
-def project_to_2d_CMU(X, camera_params):
-    """
-    Project 3D points to 2D using a simple pinhole camera model.
-    
-    Arguments:
-    X -- 3D points in *camera space* to transform (N, *, 3)
-    camera_params -- intrinsic parameters (N, 9), using only focal length, center, and resolution
-    
-    Returns:
-    2D projected points (N, *, 2)
-    """
-    assert X.shape[-1] == 3
-    assert len(camera_params.shape) == 2
-    assert camera_params.shape[-1] == 9
-    assert X.shape[0] == camera_params.shape[0]
-
-    while len(camera_params.shape) < len(X.shape):
-        camera_params = camera_params.unsqueeze(1)
-
-    f = camera_params[..., :2]  # Focal length (fx, fy)
-    c = camera_params[..., 2:4]  # Principal point (cx, cy)
-    
-    # Apply projection (ignoring distortion)
-    X_proj = X[..., :2] / X[..., 2:]  # Normalize by depth (Z)
-    X_proj = f * X_proj + c  # Apply focal length and center shift
-
-    return X_proj
-
 if __name__ == '__main__':
     if os.path.basename(os.getcwd()) != 'data':
         print('This script must be launched from the "data" directory')
