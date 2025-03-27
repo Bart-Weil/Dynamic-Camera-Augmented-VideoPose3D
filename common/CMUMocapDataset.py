@@ -66,13 +66,8 @@ class CMUMocapDataset(MocapDataset):
                     f"Number of extrinsics ({len(extrinsics_for_action)}) does not match number of frames ({num_frames}) "
                     f"for subject {subject} action {action_name}"
                 )
-                cameras_for_action = []
+                cameras_for_action = {'intrinsics': CMU_cam_intrinsic, 'extrinsics': extrinsics_for_action}
 
-                for i in range(num_frames):
-                    frame_camera = copy.deepcopy(CMU_cam_intrinsic)
-                    # Update the copied intrinsics with the frame-specific extrinsics.
-                    frame_camera.update(extrinsics_for_action[i])
-                    cameras_for_action.append(frame_camera)
                 # Store positions and the per-frame cameras in the same structure.
                 self._data[subject][action_name] = {
                     'positions': positions,

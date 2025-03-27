@@ -186,6 +186,7 @@ class UnchunkedGenerator:
     
     def __init__(self, cameras, poses_3d, poses_2d, pad=0, causal_shift=0,
                  augment=False, kps_left=None, kps_right=None, joints_left=None, joints_right=None):
+
         assert poses_3d is None or len(poses_3d) == len(poses_2d)
         assert cameras is None or len(cameras) == len(poses_2d)
 
@@ -215,11 +216,13 @@ class UnchunkedGenerator:
     
     def next_epoch(self):
         for seq_cam, seq_3d, seq_2d in zip_longest(self.cameras, self.poses_3d, self.poses_2d):
-            batch_cam = None if seq_cam is None else np.expand_dims(seq_cam, axis=0)
+            batch_cam = np.concat(seq_cam) if seq_cam is not None else None
             batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
             batch_2d = np.expand_dims(np.pad(seq_2d,
                             ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
                             'edge'), axis=0)
+            
+            # Ignore for now, requires expanded seq_cam dimensions (since removed)
             if self.augment:
                 # Append flipped version
                 if batch_cam is not None:
