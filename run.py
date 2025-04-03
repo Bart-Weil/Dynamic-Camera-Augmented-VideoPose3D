@@ -804,7 +804,7 @@ if args.render:
     if ground_truth is None:
         print('INFO: this action is unlabeled. Ground truth will not be rendered.')
         
-    gen = UnchunkedGenerator([action_cam], None, [input_keypoints],
+    gen = UnchunkedGenerator(action_cam, None, input_keypoints,
                              pad=pad, causal_shift=causal_shift, augment=False, #augment=args.test_time_augmentation,
                              kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
     prediction = evaluate(gen, return_predictions=True)
@@ -939,7 +939,7 @@ else:
                     continue
 
             poses_act, poses_2d_act, cam_extrinsics = fetch_actions(actions[action_key])
-            gen = UnchunkedGenerator([cam_extrinsics], poses_act, poses_2d_act,
+            gen = UnchunkedGenerator(cam_extrinsics, poses_act, poses_2d_act,
                                      pad=pad, causal_shift=causal_shift, augment=False,#args.test_time_augmentation,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
             e1, e2, e3, ev, v_frame_r, omega_frame_r, avg_v, avg_omega = evaluate(gen, action_key)

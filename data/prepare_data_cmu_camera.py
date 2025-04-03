@@ -45,7 +45,8 @@ if __name__ == '__main__':
         positions_3d = {}
         cam_extrinsics = {}
 
-        for subject in tqdm(subjects[:10]):
+        for subject in tqdm(subjects[:1]):
+            print(subject)
             positions_3d[subject] = {}
             cam_extrinsics[subject] = {}
             file_list = glob(args.from_source + '/' + subject + '/*.pkl')

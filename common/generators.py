@@ -46,7 +46,7 @@ class ChunkedGenerator:
             pairs += zip(np.repeat(i, len(bounds - 1)), bounds[:-1], bounds[1:], augment_vector)
             if augment:
                 pairs += zip(np.repeat(i, len(bounds - 1)), bounds[:-1], bounds[1:], ~augment_vector)
-
+        cameras = None
         # Initialize buffers
         if cameras is not None:
             self.batch_cam = np.empty((batch_size, cameras[0].shape[-1]))
@@ -215,28 +215,31 @@ class UnchunkedGenerator:
         self.augment = augment
     
     def next_epoch(self):
-        for seq_cam, seq_3d, seq_2d in zip_longest(self.cameras, self.poses_3d, self.poses_2d):
-            batch_cam = np.concat(seq_cam) if seq_cam is not None else None
-            batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
-            batch_2d = np.expand_dims(np.pad(seq_2d,
-                            ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
-                            'edge'), axis=0)
+        print(self.cameras.shape, self.poses_3d.shape, self.poses_2d.shape)
+        seq_cam = self.cameras
+        seq_3d = self.poses_3d
+        seq_2d = self.poses_2d
+        batch_cam = seq_cam if seq_cam is not None else None
+        batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
+        batch_2d = np.expand_dims(np.pad(seq_2d,
+                        ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
+                        'edge'), axis=0)
+        
+        # Ignore for now, requires expanded seq_cam dimensions (since removed)
+        if self.augment:
+            # Append flipped version
+            if batch_cam is not None:
+                batch_cam = np.concatenate((batch_cam, batch_cam), axis=0)
+                batch_cam[1, 2] *= -1
+                batch_cam[1, 7] *= -1
             
-            # Ignore for now, requires expanded seq_cam dimensions (since removed)
-            if self.augment:
-                # Append flipped version
-                if batch_cam is not None:
-                    batch_cam = np.concatenate((batch_cam, batch_cam), axis=0)
-                    batch_cam[1, 2] *= -1
-                    batch_cam[1, 7] *= -1
-                
-                if batch_3d is not None:
-                    batch_3d = np.concatenate((batch_3d, batch_3d), axis=0)
-                    batch_3d[1, :, :, 0] *= -1
-                    batch_3d[1, :, self.joints_left + self.joints_right] = batch_3d[1, :, self.joints_right + self.joints_left]
+            if batch_3d is not None:
+                batch_3d = np.concatenate((batch_3d, batch_3d), axis=0)
+                batch_3d[1, :, :, 0] *= -1
+                batch_3d[1, :, self.joints_left + self.joints_right] = batch_3d[1, :, self.joints_right + self.joints_left]
 
-                batch_2d = np.concatenate((batch_2d, batch_2d), axis=0)
-                batch_2d[1, :, :, 0] *= -1
-                batch_2d[1, :, self.kps_left + self.kps_right] = batch_2d[1, :, self.kps_right + self.kps_left]
+            batch_2d = np.concatenate((batch_2d, batch_2d), axis=0)
+            batch_2d[1, :, :, 0] *= -1
+            batch_2d[1, :, self.kps_left + self.kps_right] = batch_2d[1, :, self.kps_right + self.kps_left]
 
-            yield batch_cam, batch_3d, batch_2d
+        yield batch_cam, batch_3d, batch_2d
