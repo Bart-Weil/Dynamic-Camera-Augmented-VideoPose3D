@@ -249,6 +249,9 @@ print('INFO: Testing on {} frames'.format(test_generator.num_frames()))
 
 if not args.evaluate:
     cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
+    
+    cameras_train_intrinsics = [cam_seq['intrinsics'] for cam_seq in cameras_train]
+    cameras_train_extrinsics = [cam_seq['extrinsics'] for cam_seq in cameras_train]
 
     lr = args.learning_rate
     if semi_supervised:
@@ -294,8 +297,8 @@ if not args.evaluate:
     initial_momentum = 0.1
     final_momentum = 0.001
     
-    train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train, poses_train, poses_train_2d, args.stride,
-                                       pad=pad, causal_shift=causal_shift, shuffle=True, augment=args.data_augmentation,
+    train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train_intrinsics, cameras_train_extrinsics, poses_train,
+                                       poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True, augment=args.data_augmentation,
                                        kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
     train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
                                               pad=pad, causal_shift=causal_shift, augment=False)
@@ -418,9 +421,11 @@ if not args.evaluate:
             losses_2d_train_unlabeled.append(epoch_loss_2d_train_unlabeled / N_semi)
         else:
             # Regular supervised scenario
-            for _, batch_3d, batch_2d in train_generator.next_epoch():
+            for batch_cam, batch_3d, batch_2d in train_generator.next_epoch():
                 inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
                 inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                print(batch_cam.shape)
+                print(inputs_2d.shape)
                 if torch.cuda.is_available():
                     inputs_3d = inputs_3d.cuda()
                     inputs_2d = inputs_2d.cuda()

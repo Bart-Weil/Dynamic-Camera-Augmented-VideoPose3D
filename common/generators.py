@@ -62,8 +62,9 @@ class ChunkedGenerator:
         self.causal_shift = causal_shift
         self.endless = endless
         self.state = None
-        
-        self.cameras = cameras
+
+        self.extrinsics = extrinsics
+        self.intrinsics = intrinsics
         self.poses_3d = poses_3d
         self.poses_2d = poses_2d
         
@@ -115,6 +116,20 @@ class ChunkedGenerator:
                     start_2d = start_3d - self.pad - self.causal_shift
                     end_2d = end_3d + self.pad - self.causal_shift
                     self.batch_2d[i] = self.pad_chunk(self.poses_2d[seq_i], start_2d, end_2d)
+                    
+                    batch_extrinsics = self.pad_chunk(self.extrinsics[seq_i], start_2d, end_2d)
+
+                    cam_dict = self.intrinsics[seq_i]
+                    fx, fy = cam_dict['focal_length']
+                    cx, cy = cam_dict['center']
+
+                    seq_intrinsic_mat = np.array([
+                        [fx, 0,  cx],
+                        [0,  fy, cy],
+                        [0,  0,   1]
+                    ], dtype=np.float32)
+                    # Compute camera matrices
+                    self.batch_cam[i] = seq_intrinsic_mat @ batch_extrinsics
 
                     if flip:
                         # Flip 2D keypoints
@@ -129,13 +144,9 @@ class ChunkedGenerator:
                         self.batch_3d[i, :, self.joints_left + self.joints_right] = \
                                 self.batch_3d[i, :, self.joints_right + self.joints_left]
 
-                    # Cameras
-                    if self.cameras is not None:
-                        self.batch_cam[i] = self.cameras[seq_i]
-                        if flip:
-                            # Flip horizontal distortion coefficients
-                            self.batch_cam[i, 2] *= -1
-                            self.batch_cam[i, 7] *= -1
+                        # Flip horizontal distortion coefficients
+                        self.batch_cam[i, 2] *= -1
+                        self.batch_cam[i, 7] *= -1
 
                 if self.endless:
                     self.state = (b_i + 1, pairs)
