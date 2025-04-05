@@ -512,7 +512,7 @@ if not args.evaluate:
                             cam_window = inputs_cam[:, t:t+seq_length]
 
                             pred = model_pos(input_window, cam_window)
-                            predictions.append(pred.detach().cpu())
+                            predictions.append(pred.detach())
 
                         predictions_3d_pos_flat = torch.stack(predictions, dim=0)
                         predicted_3d_pos = predictions_3d_pos_flat.reshape(inputs_3d.shape)
