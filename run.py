@@ -9,6 +9,7 @@ import numpy as np
 
 import pickle
 from common.arguments import parse_args
+from common.models.temporal_FCNs import TemporalModel, TemporalModelOptimized1f
 import torch
 
 import torch.nn as nn
@@ -424,11 +425,11 @@ if not args.evaluate:
             for batch_cam, batch_3d, batch_2d in train_generator.next_epoch():
                 inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
                 inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                print(batch_cam.shape)
-                print(inputs_2d.shape)
+                inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
                 if torch.cuda.is_available():
                     inputs_3d = inputs_3d.cuda()
                     inputs_2d = inputs_2d.cuda()
+                    inputs_cam = inputs_cam.cuda()
                 inputs_3d[:, :, 0] = 0
 
                 optimizer.zero_grad()
@@ -461,12 +462,14 @@ if not args.evaluate:
             
             if not args.no_eval:
                 # Evaluate on test set
-                for cam, batch, batch_2d in test_generator.next_epoch():
-                    inputs_3d = torch.from_numpy(batch.astype('float32'))
+                for batch_cam, batch_3d, batch_2d in test_generator.next_epoch():
+                    inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
                     inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                    inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
                     if torch.cuda.is_available():
                         inputs_3d = inputs_3d.cuda()
                         inputs_2d = inputs_2d.cuda()
+                        inputs_cam = inputs_cam.cuda()
                     inputs_traj = inputs_3d[:, :, :1].clone()
                     inputs_3d[:, :, 0] = 0
 
