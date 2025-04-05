@@ -324,7 +324,7 @@ if not args.evaluate:
     train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train_intrinsics, cameras_train_extrinsics, poses_train,
                                        poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True, augment=args.data_augmentation,
                                        kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-    train_generator_eval = UnchunkedGenerator(cameras_train_intrinsics, cameras_valid_extrinsics, poses_train, poses_train_2d,
+    train_generator_eval = UnchunkedGenerator(cameras_train_intrinsics, cameras_train_extrinsics, poses_train, poses_train_2d,
                                               pad=pad, causal_shift=causal_shift, augment=False)
     print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
     if semi_supervised:
@@ -458,8 +458,12 @@ if not args.evaluate:
                 optimizer.zero_grad()
 
                 # Predict 3D poses
-                predicted_3d_pos_flat = model_pos_train(inputs_2d, inputs_cam)
-                predicted_3d_pos = predicted_3d_pos_flat.reshape(batch_3d.shape)
+                if type(model_pos) == CoupledLSTM:
+                    predicted_3d_pos_flat = model_pos(inputs_2d, inputs_cam)
+                    predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
+                elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+                    predicted_3d_pos = model_pos(inputs_2d)
+
                 loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                 epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                 N += inputs_3d.shape[0]*inputs_3d.shape[1]
@@ -498,7 +502,22 @@ if not args.evaluate:
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
-                    predicted_3d_pos = model_pos(inputs_2d)
+                    if type(model_pos) == CoupledLSTM:
+                        seq_length = train_generator.seq_length                            
+                        
+                        # Sliding window approach
+                        predictions = []
+                        for t in range(inputs_2d.shape[1] - seq_length + 1):
+                            input_window = inputs_2d[:, t:t+seq_length]
+                            cam_window = inputs_cam[:, t:t+seq_length]
+
+                            pred = model_pos(input_window, cam_window)
+                            predictions.append(pred.detach().cpu())
+
+                        predictions_3d_pos_flat = torch.stack(predictions, dim=0)
+                        predicted_3d_pos = predictions_3d_pos_flat.reshape(inputs_3d.shape)
+                    elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+                        predicted_3d_pos = model_pos(inputs_2d)
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_valid += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]

@@ -48,10 +48,12 @@ class ChunkedGenerator:
             if augment:
                 pairs += zip(np.repeat(i, len(bounds - 1)), bounds[:-1], bounds[1:], ~augment_vector)
 
+        self.seq_length = chunk_length + 2*pad
+
         # Initialize buffers
-        self.batch_cam = np.empty((batch_size, chunk_length + 2*pad, 3, 4))
+        self.batch_cam = np.empty((batch_size, self.seq_length, 3, 4))
         self.batch_3d = np.empty((batch_size, chunk_length, poses_3d[0].shape[-2], poses_3d[0].shape[-1]))
-        self.batch_2d = np.empty((batch_size, chunk_length + 2*pad, poses_2d[0].shape[-2], poses_2d[0].shape[-1]))
+        self.batch_2d = np.empty((batch_size, self.seq_length, poses_2d[0].shape[-2], poses_2d[0].shape[-1]))
 
         self.num_batches = (len(pairs) + batch_size - 1) // batch_size
         self.batch_size = batch_size
@@ -209,13 +211,27 @@ class UnchunkedGenerator:
         self.augment = augment
     
     def next_epoch(self):
-        for seq_extrinsics, seq_3d, seq_2d in zip_longest(self.extrinsics, self.poses_3d, self.poses_2d):
-            batch_cam = self.intrinsics @ seq_extrinsics
+        for idx, (seq_extrinsics, seq_3d, seq_2d) in enumerate(zip_longest(self.extrinsics, self.poses_3d, self.poses_2d)):
+            cam_dict = self.intrinsics[idx]
+            fx, fy = cam_dict['focal_length']
+            cx, cy = cam_dict['center']
+
+            seq_intrinsic_mat = np.array([
+                [fx, 0,  cx],
+                [0,  fy, cy],
+                [0,  0,   1]
+            ], dtype=np.float32)
+
+            seq_cam = seq_intrinsic_mat @ seq_extrinsics
 
             batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
             batch_2d = np.expand_dims(np.pad(seq_2d,
                         ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
                         'edge'), axis=0)
+            batch_cam = np.expand_dims(np.pad(seq_cam,
+                        ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
+                        'edge'), axis=0)
+
         
             # Ignore for now, requires expanded seq_cam dimensions (since removed)
             # if self.augment:

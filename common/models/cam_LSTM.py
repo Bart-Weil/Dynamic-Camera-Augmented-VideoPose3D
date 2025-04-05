@@ -79,6 +79,7 @@ class CoupledLSTM(nn.Module):
             h_0 = h_0.cuda()
 
         lstm_out, _ = self.lstm_layers(x, (h_0, c_0))
-        mlp_out = self.mlp_layers(lstm_out[:, -1, :])
+        seq_midpint = lstm_out.shape[1]//2
+        mlp_out = self.mlp_layers(lstm_out[:, seq_midpint, :])
 
         return mlp_out

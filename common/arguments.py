@@ -45,9 +45,9 @@ def parse_args():
                         help='disable test-time flipping')
     
     # LSTM arguments
-    parser.add_argument('--hidden-features', dest='lstm_hidden_features', default=256, type=int, metavar='N', help='number of hidden features for LSTM')
+    parser.add_argument('--hidden-features', dest='lstm_hidden_features', default=128, type=int, metavar='N', help='number of hidden features for LSTM')
     parser.add_argument('--lstm-cells', dest='lstm_cells', default=1, type=int, metavar='N', help='number of stacked LSTM cells')
-    parser.add_argument('--lstm-head-architecture', dest='lstm_head_architecture', default='200,100', type=str, metavar='X,Y,Z', 
+    parser.add_argument('--lstm-head-architecture', dest='lstm_head_architecture', default='100', type=str, metavar='X,Y,Z', 
                         help='layer sizes for LSTM head separated by comma')
     parser.add_argument('--lstm-dropout', dest='lstm_dropout', default=0.25, type=float, metavar='P', help='LSTM dropout probability')
 
