@@ -31,20 +31,32 @@ def parse_args():
     parser.add_argument('--by-subject', action='store_true', help='break down error by subject (on evaluation)')
     parser.add_argument('--export-training-curves', action='store_true', help='save training curves as .png images')
 
-    # Model arguments
-    parser.add_argument('-s', '--stride', default=1, type=int, metavar='N', help='chunk size to use during training')
+    # Model selection
+    parser.add_argument('--use-model', dest='model_name', default='FCN', type=str, help='FCN, LSTM')
+
+    # Learning arguments
     parser.add_argument('-e', '--epochs', default=60, type=int, metavar='N', help='number of training epochs')
     parser.add_argument('-b', '--batch-size', default=1024, type=int, metavar='N', help='batch size in terms of predicted frames')
-    parser.add_argument('-drop', '--dropout', default=0.25, type=float, metavar='P', help='dropout probability')
     parser.add_argument('-lr', '--learning-rate', default=0.001, type=float, metavar='LR', help='initial learning rate')
     parser.add_argument('-lrd', '--lr-decay', default=0.95, type=float, metavar='LR', help='learning rate decay per epoch')
     parser.add_argument('-no-da', '--no-data-augmentation', dest='data_augmentation', action='store_false',
                         help='disable train-time flipping')
     parser.add_argument('-no-tta', '--no-test-time-augmentation', dest='test_time_augmentation', action='store_false',
                         help='disable test-time flipping')
-    parser.add_argument('-arc', '--architecture', default='3,3,3', type=str, metavar='LAYERS', help='filter widths separated by comma')
+    
+    # LSTM arguments
+    parser.add_argument('--hidden-features', dest='lstm_hidden_features', default=256, type=int, metavar='N', help='number of hidden features for LSTM')
+    parser.add_argument('--lstm-cells', dest='lstm_cells', default=1, type=int, metavar='N', help='number of stacked LSTM cells')
+    parser.add_argument('--lstm-head-architecture', dest='lstm_head_architecture', default='200,100', type=str, metavar='X,Y,Z', 
+                        help='layer sizes for LSTM head separated by comma')
+    parser.add_argument('--lstm-dropout', dest='lstm_dropout', default=0.25, type=float, metavar='P', help='LSTM dropout probability')
+
+    # Temporal FCN arguments
+    parser.add_argument('-s', '--stride', default=1, type=int, metavar='N', help='chunk size to use during training')
+    parser.add_argument('--fcn-architecture', dest='fcn_architecture', default='3,3,3', type=str, metavar='LAYERS', help='temporal FCN filter widths separated by comma')
     parser.add_argument('--causal', action='store_true', help='use causal convolutions for real-time processing')
     parser.add_argument('-ch', '--channels', default=1024, type=int, metavar='N', help='number of channels in convolution layers')
+    parser.add_argument('--fcn-dropout', dest='fcn_dropout', default=0.25, type=float, metavar='P', help='temporal FCN dropout probability')
 
     # Experimental
     parser.add_argument('--subset', default=1, type=float, metavar='FRACTION', help='reduce dataset size by fraction')

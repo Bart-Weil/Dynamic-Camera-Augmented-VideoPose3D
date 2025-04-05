@@ -10,6 +10,7 @@ import numpy as np
 import pickle
 from common.arguments import parse_args
 from common.models.temporal_FCNs import TemporalModel, TemporalModelOptimized1f
+from common.models.cam_LSTM import CoupledLSTM
 import torch
 
 import torch.nn as nn
@@ -190,29 +191,48 @@ if action_filter is not None:
     
 cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_test, action_filter)
 
-filter_widths = [int(x) for x in args.architecture.split(',')]
-if not args.disable_optimizations and not args.dense and args.stride == 1:
-    # Use optimized model for single-frame predictions
-    model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                                filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels)
-else:
-    # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
-    model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                                filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels,
-                                dense=args.dense)
-    
-model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                            filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels,
-                            dense=args.dense)
 
-receptive_field = model_pos.receptive_field()
-print('INFO: Receptive field: {} frames'.format(receptive_field))
-pad = (receptive_field - 1) // 2 # Padding on each side
-if args.causal:
-    print('INFO: Using causal convolutions')
-    causal_shift = pad
-else:
-    causal_shift = 0
+match args.model_name:
+    case 'FCN':
+        filter_widths = [int(x) for x in args.fcn_architecture.split(',')]
+        
+        if not args.disable_optimizations and not args.dense and args.stride == 1:
+            # Use optimized model for single-frame predictions
+            model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                        filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
+        else:
+            # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
+            model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                        filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
+                                        dense=args.dense)
+            
+        model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                    filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
+                                    dense=args.dense)
+        
+        receptive_field = model_pos.receptive_field()
+        print('INFO: Receptive field: {} frames'.format(receptive_field))
+        pad = (receptive_field - 1) // 2 # Padding on each side
+        if args.causal:
+            print('INFO: Using causal convolutions')
+            causal_shift = pad
+        else:
+            causal_shift = 0
+
+    case 'LSTM':
+         # Default sequence padding values
+        pad = 13
+        causal_shift = 0
+
+        lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
+        
+        model_pos_train = CoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
+                                      dropout=args.lstm_dropout)
+        
+        model_pos = CoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
+                                      dropout=args.lstm_dropout)
 
 model_params = 0
 for parameter in model_pos.parameters():
@@ -234,7 +254,7 @@ if args.resume or args.evaluate:
     if args.evaluate and 'model_traj' in checkpoint:
         # Load trajectory model if it contained in the checkpoint (e.g. for inference in the wild)
         model_traj = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                            filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels,
+                            filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                             dense=args.dense)
         if torch.cuda.is_available():
             model_traj = model_traj.cuda()
@@ -242,8 +262,11 @@ if args.resume or args.evaluate:
         model_traj = None
     else:
         model_traj = None
-    
-test_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
+
+cameras_valid_intrinsics = [cam_seq['intrinsics'] for cam_seq in cameras_valid]
+cameras_valid_extrinsics = [cam_seq['extrinsics'] for cam_seq in cameras_valid]
+
+test_generator = UnchunkedGenerator(cameras_valid_intrinsics, cameras_valid_extrinsics, poses_valid, poses_valid_2d,
                                     pad=pad, causal_shift=causal_shift, augment=False,
                                     kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
 print('INFO: Testing on {} frames'.format(test_generator.num_frames()))
@@ -261,15 +284,15 @@ if not args.evaluate:
         if not args.disable_optimizations and not args.dense and args.stride == 1:
             # Use optimized model for single-frame predictions
             model_traj_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                    filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels)
+                    filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
         else:
             # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
             model_traj_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                    filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels,
+                    filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                     dense=args.dense)
         
         model_traj = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                            filter_widths=filter_widths, causal=args.causal, dropout=args.dropout, channels=args.channels,
+                            filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                             dense=args.dense)
         if torch.cuda.is_available():
             model_traj = model_traj.cuda()
@@ -301,7 +324,7 @@ if not args.evaluate:
     train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train_intrinsics, cameras_train_extrinsics, poses_train,
                                        poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True, augment=args.data_augmentation,
                                        kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-    train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
+    train_generator_eval = UnchunkedGenerator(cameras_train_intrinsics, cameras_valid_extrinsics, poses_train, poses_train_2d,
                                               pad=pad, causal_shift=causal_shift, augment=False)
     print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
     if semi_supervised:
@@ -435,7 +458,8 @@ if not args.evaluate:
                 optimizer.zero_grad()
 
                 # Predict 3D poses
-                predicted_3d_pos = model_pos_train(inputs_2d)
+                predicted_3d_pos_flat = model_pos_train(inputs_2d, inputs_cam)
+                predicted_3d_pos = predicted_3d_pos_flat.reshape(batch_3d.shape)
                 loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                 epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                 N += inputs_3d.shape[0]*inputs_3d.shape[1]

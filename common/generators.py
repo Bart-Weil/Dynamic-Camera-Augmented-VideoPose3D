@@ -178,11 +178,10 @@ class UnchunkedGenerator:
     joints_left and joints_right -- list of left/right 3D joints if flipping is enabled
     """
     
-    def __init__(self, cameras, poses_3d, poses_2d, pad=0, causal_shift=0,
+    def __init__(self, intrinsics, extrinsics, poses_3d, poses_2d, pad=0, causal_shift=0,
                  augment=False, kps_left=None, kps_right=None, joints_left=None, joints_right=None):
 
-        assert poses_3d is None or len(poses_3d) == len(poses_2d)
-        assert cameras is None or len(cameras) == len(poses_2d)
+        assert len(poses_3d) == len(poses_2d)
 
         self.augment = augment
         self.kps_left = kps_left
@@ -192,7 +191,8 @@ class UnchunkedGenerator:
         
         self.pad = pad
         self.causal_shift = causal_shift
-        self.cameras = [] if cameras is None else cameras
+        self.intrinsics = intrinsics
+        self.extrinsics = extrinsics
         self.poses_3d = [] if poses_3d is None else poses_3d
         self.poses_2d = poses_2d
         
@@ -209,8 +209,9 @@ class UnchunkedGenerator:
         self.augment = augment
     
     def next_epoch(self):
-        for seq_cam, seq_3d, seq_2d in zip_longest(self.cameras, self.poses_3d, self.poses_2d):
-            batch_cam = seq_cam
+        for seq_extrinsics, seq_3d, seq_2d in zip_longest(self.extrinsics, self.poses_3d, self.poses_2d):
+            batch_cam = self.intrinsics @ seq_extrinsics
+
             batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
             batch_2d = np.expand_dims(np.pad(seq_2d,
                         ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
