@@ -20,7 +20,7 @@ import sys
 import errno
 
 from common.camera import *
-from common.model import *
+from common.models.temporal_FCNs import *
 from common.loss import *
 from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
