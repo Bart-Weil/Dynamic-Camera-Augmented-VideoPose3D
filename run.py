@@ -240,8 +240,11 @@ for parameter in model_pos.parameters():
 print('INFO: Trainable parameter count:', model_params)
 
 if torch.cuda.is_available():
+    print("INFO: using CUDA")
     model_pos = model_pos.cuda()
     model_pos_train = model_pos_train.cuda()
+else:
+    print("INFO: CUDA unavailable")
     
 if args.resume or args.evaluate:
     chk_filename = os.path.join(args.checkpoint, args.resume if args.resume else args.evaluate)
@@ -503,18 +506,9 @@ if not args.evaluate:
 
                     # Predict 3D poses
                     if type(model_pos) == CoupledLSTM:
-                        seq_length = train_generator.seq_length                            
-                        
-                        # Sliding window approach
-                        predictions = []
-                        for t in range(inputs_2d.shape[1] - seq_length + 1):
-                            input_window = inputs_2d[:, t:t+seq_length]
-                            cam_window = inputs_cam[:, t:t+seq_length]
+                        predictions_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam,
+                                                                           train_generator.seq_length)
 
-                            pred = model_pos(input_window, cam_window)
-                            predictions.append(pred.detach())
-
-                        predictions_3d_pos_flat = torch.stack(predictions, dim=0)
                         predicted_3d_pos = predictions_3d_pos_flat.reshape(inputs_3d.shape)
                     elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
                         predicted_3d_pos = model_pos(inputs_2d)
@@ -546,27 +540,34 @@ if not args.evaluate:
                     losses_traj_valid.append(epoch_loss_traj_valid / N)
                     losses_2d_valid.append(epoch_loss_2d_valid / N)
 
-
                 # Evaluate on training set, this time in evaluation mode
                 epoch_loss_3d_train_eval = 0
                 epoch_loss_traj_train_eval = 0
                 epoch_loss_2d_train_labeled_eval = 0
                 N = 0
-                for cam, batch, batch_2d in train_generator_eval.next_epoch():
+                for batch_cam, batch, batch_2d in train_generator_eval.next_epoch():
                     if batch_2d.shape[1] == 0:
                         # This can only happen when downsampling the dataset
                         continue
-                        
+                       
                     inputs_3d = torch.from_numpy(batch.astype('float32'))
                     inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                    inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
+
                     if torch.cuda.is_available():
                         inputs_3d = inputs_3d.cuda()
                         inputs_2d = inputs_2d.cuda()
+                        inputs_cam = inputs_cam.cuda()
                     inputs_traj = inputs_3d[:, :, :1].clone()
                     inputs_3d[:, :, 0] = 0
 
-                    # Compute 3D poses
-                    predicted_3d_pos = model_pos(inputs_2d)
+                    # Predict 3D poses
+                    if type(model_pos) == CoupledLSTM:
+                        predicted_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam, train_generator.seq_length)
+                        predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
+                    elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+                        predicted_3d_pos = model_pos(inputs_2d)
+
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_train_eval += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
