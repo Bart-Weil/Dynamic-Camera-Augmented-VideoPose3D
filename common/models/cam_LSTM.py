@@ -42,7 +42,7 @@ class CoupledLSTM(nn.Module):
         self.lstm_layers = nn.LSTM(num_joints_in*in_features + self.cam_mat_shape[0]*self.cam_mat_shape[1], 
                                    hidden_size, num_cells, batch_first=True, dropout=dropout)
 
-        mlp_layers = [nn.Linear(hidden_size, head_layers[0])]
+        mlp_layers = [nn.Linear(hidden_size, head_layers[0]), nn.LeakyReLU(), nn.Dropout(dropout)]
         
         for i in range(len(head_layers)-1):
             mlp_layers.append(nn.Linear(head_layers[i], head_layers[i+1]))

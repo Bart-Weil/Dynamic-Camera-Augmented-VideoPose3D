@@ -254,15 +254,15 @@ if args.resume or args.evaluate:
     model_pos_train.load_state_dict(checkpoint['model_pos'])
     model_pos.load_state_dict(checkpoint['model_pos'])
     
-    if args.evaluate and 'model_traj' in checkpoint:
-        # Load trajectory model if it contained in the checkpoint (e.g. for inference in the wild)
-        model_traj = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                            filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
-                            dense=args.dense)
-        if torch.cuda.is_available():
-            model_traj = model_traj.cuda()
-        #model_traj.load_state_dict(checkpoint['model_traj'])
-        model_traj = None
+    if args.evaluate and checkpoint['model_traj'] != None:
+        if args.model_name == "FCN":
+            # Load trajectory model if it contained in the checkpoint (e.g. for inference in the wild)
+            model_traj = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
+                                filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
+                                dense=args.dense)
+            if torch.cuda.is_available():
+                model_traj = model_traj.cuda()
+            model_traj.load_state_dict(checkpoint['model_traj'])
     else:
         model_traj = None
 
@@ -461,11 +461,11 @@ if not args.evaluate:
                 optimizer.zero_grad()
 
                 # Predict 3D poses
-                if type(model_pos) == CoupledLSTM:
-                    predicted_3d_pos_flat = model_pos(inputs_2d, inputs_cam)
+                if type(model_pos_train) == CoupledLSTM:
+                    predicted_3d_pos_flat = model_pos_train(inputs_2d, inputs_cam)
                     predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
-                elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
-                    predicted_3d_pos = model_pos(inputs_2d)
+                elif type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
+                    predicted_3d_pos = model_pos_train(inputs_2d)
 
                 loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                 epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
@@ -507,7 +507,7 @@ if not args.evaluate:
                     # Predict 3D poses
                     if type(model_pos) == CoupledLSTM:
                         predictions_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam,
-                                                                           train_generator.seq_length)
+                                                                           test_generator.seq_length)
 
                         predicted_3d_pos = predictions_3d_pos_flat.reshape(inputs_3d.shape)
                     elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
@@ -659,8 +659,10 @@ if not args.evaluate:
         epoch += 1
         
         # Decay BatchNorm momentum
-        momentum = initial_momentum * np.exp(-epoch/args.epochs * np.log(initial_momentum/final_momentum))
-        model_pos_train.set_bn_momentum(momentum)
+        if type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
+            momentum = initial_momentum * np.exp(-epoch/args.epochs * np.log(initial_momentum/final_momentum))
+            model_pos_train.set_bn_momentum(momentum)
+
         if semi_supervised:
             model_traj_train.set_bn_momentum(momentum)
             
@@ -743,12 +745,15 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
         N = 0
 
         for cams, batch, batch_2d in test_generator.next_epoch():
-            cams_list = list(cams)
-            # TODO: refactor using ein?
-            cam_orients = np.array([cam[:, :3] for cam in cams_list])
-            cam_positions = np.array([-cam_orients[i].T @ cams_list[i][:, 3] for i in range(len(cams_list))])
-            
-            cam_vels = np.linalg.norm(np.diff(cam_positions, axis=0, prepend=cam_positions[[0], :]), axis=1) * dataset.fps()
+            cam_pad_before = test_generator.pad + test_generator.causal_shift
+            cam_pad_after = test_generator.pad - test_generator.causal_shift
+            # 1st dimension is batch, 2nd is action frames, test generator returns singleton batches
+            unpadded_cams = cams[0, cam_pad_before:-cam_pad_after]
+
+            cam_orients = unpadded_cams[:, :, :3]
+            cam_positions = np.squeeze(np.matmul(-cam_orients.transpose([0, 2, 1]), unpadded_cams[:, :, 3:]))
+                
+            cam_vels = np.linalg.norm(np.diff(cam_positions, axis=0, prepend=cam_positions[[0]]), axis=1) * dataset.fps()
             v_sum += np.sum(cam_vels)
 
             # 20 frame moving average smoothing for per frame correlation
@@ -767,16 +772,29 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
             # Smoothing
             cam_anglular_vels = np.convolve(cam_anglular_vels, np.ones(20)/20, mode='same')
-            
+
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+            inputs_3d = torch.from_numpy(batch.astype('float32'))
+            inputs_cam = torch.from_numpy(cams.astype('float32'))
+
             if torch.cuda.is_available():
                 inputs_2d = inputs_2d.cuda()
+                inputs_3d = inputs_3d.cuda()
+                inputs_cam = inputs_cam.cuda()
+
+            inputs_3d[:, :, 0] = 0    
+            if test_generator.augment_enabled():
+                inputs_3d = inputs_3d[:1]
 
             # Positional model
-            if not use_trajectory_model:
-                predicted_3d_pos = model_pos(inputs_2d)
+            if type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+                if not use_trajectory_model:
+                    predicted_3d_pos = model_pos(inputs_2d)
+                else:
+                    predicted_3d_pos = model_traj(inputs_2d)
             else:
-                predicted_3d_pos = model_traj(inputs_2d)
+                predicted_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
+                predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
 
             # Test-time augmentation (if enabled)
             if test_generator.augment_enabled():
@@ -789,13 +807,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             if return_predictions:
                 return predicted_3d_pos.squeeze(0).cpu().numpy()
                 
-            inputs_3d = torch.from_numpy(batch.astype('float32'))
-            if torch.cuda.is_available():
-                inputs_3d = inputs_3d.cuda()
-            inputs_3d[:, :, 0] = 0    
-            if test_generator.augment_enabled():
-                inputs_3d = inputs_3d[:1]
-
+            
             error = mpjpe(predicted_3d_pos, inputs_3d)
             error_per_pose = torch.mean(torch.linalg.norm(predicted_3d_pos - inputs_3d, dim=len(inputs_3d.shape)-1), axis=2)
             error_per_pose = np.squeeze(error_per_pose.cpu().numpy())
@@ -945,18 +957,20 @@ else:
     def fetch_actions(actions):
         out_poses_3d = []
         out_poses_2d = []
+        out_cam_intrinsics = []
         out_cam_extrinsics = []
 
         for subject, action in actions:
             poses_2d = keypoints[subject][action]
-            for i in range(len(poses_2d)): # Iterate across cameras
+            for i in range(len(poses_2d)):
                 out_poses_2d.append(poses_2d[i])
 
             poses_3d = dataset[subject][action]['positions_3d']
             assert len(poses_3d) == len(poses_2d), 'Camera count mismatch'
-            for i in range(len(poses_3d)): # Iterate across cameras
+            for i in range(len(poses_3d)):
                 out_poses_3d.append(poses_3d[i])
 
+            out_cam_intrinsics.append(dataset._cameras[subject][action]['intrinsics'])
             out_cam_extrinsics.append(dataset._cameras[subject][action]['extrinsics'])
 
         stride = args.downsample
@@ -967,7 +981,7 @@ else:
                 if out_poses_3d is not None:
                     out_poses_3d[i] = out_poses_3d[i][::stride]
         
-        return out_poses_3d, out_poses_2d, out_cam_extrinsics
+        return out_poses_3d, out_poses_2d, out_cam_intrinsics, out_cam_extrinsics
 
     def run_evaluation(actions, action_filter=None):
         errors_p1 = []
@@ -989,8 +1003,8 @@ else:
                 if not found:
                     continue
 
-            poses_act, poses_2d_act, cam_extrinsics = fetch_actions(actions[action_key])
-            gen = UnchunkedGenerator(cam_extrinsics, poses_act, poses_2d_act,
+            poses_act, poses_2d_act, cam_intrinsics, cam_extrinsics = fetch_actions(actions[action_key])
+            gen = UnchunkedGenerator(cam_intrinsics, cam_extrinsics, poses_act, poses_2d_act,
                                      pad=pad, causal_shift=causal_shift, augment=False,#args.test_time_augmentation,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
             e1, e2, e3, ev, v_frame_r, omega_frame_r, avg_v, avg_omega = evaluate(gen, action_key)

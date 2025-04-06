@@ -197,6 +197,7 @@ class UnchunkedGenerator:
         self.extrinsics = extrinsics
         self.poses_3d = [] if poses_3d is None else poses_3d
         self.poses_2d = poses_2d
+        self.seq_length = 1 + 2*pad
         
     def num_frames(self):
         count = 0
