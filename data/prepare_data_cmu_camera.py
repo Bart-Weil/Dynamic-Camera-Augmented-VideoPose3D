@@ -7,14 +7,10 @@
 
 import argparse
 import os
-import zipfile
 import numpy as np
 import pickle
-import copy
 
 from tqdm import tqdm
-
-import transforms3d
 
 from glob import glob
 from shutil import rmtree
@@ -36,6 +32,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='CMU Camera dataset downloader/converter')
     
     parser.add_argument('--from-source', default='', type=str, metavar='PATH', help='convert original dataset')
+    parser.add_argument('--convert-benchmark', action='store_true', help='include benchmark files')
     
     args = parser.parse_args()
    
@@ -49,7 +46,12 @@ if __name__ == '__main__':
             print(subject)
             positions_3d[subject] = {}
             cam_extrinsics[subject] = {}
+            # if benchmark flag set, only convert .pkl files containing _benchmark
             file_list = glob(args.from_source + '/' + subject + '/*.pkl')
+            if args.convert_benchmark:
+                file_list = filter(lambda x: '_benchmark' in x, file_list)
+            else:
+                file_list = filter(lambda x: '_benchmark' not in x, file_list)
             
             for f in file_list:
                 scene_file = open(f, "rb")
