@@ -467,6 +467,7 @@ if not args.evaluate:
                 elif type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
                     predicted_3d_pos = model_pos_train(inputs_2d)
 
+                print(predicted_3d_pos.shape, inputs_3d.shape)
                 loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                 epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                 N += inputs_3d.shape[0]*inputs_3d.shape[1]
