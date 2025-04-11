@@ -850,6 +850,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     print('Velocity Error (MPJVE):', ev, 'mm')
     print('Cam. velocity correlation (per frame):', frame_vel_r)
     print('Cam. angular velocity correlation (per frame):', frame_omega_r)
+    print('Average cam. velocity:', avg_v)
     print('----------')
 
     # Return metrics and cam v, omega to use for action wise correlation
@@ -863,11 +864,15 @@ if args.render:
     if args.viz_subject in dataset.subjects() and args.viz_action in dataset[args.viz_subject]:
         if 'positions_3d' in dataset[args.viz_subject][args.viz_action]:
             ground_truth = dataset[args.viz_subject][args.viz_action]['positions_3d'][args.viz_camera].copy()
-        action_cam = dataset[args.viz_subject][args.viz_action]['cameras']['extrinsics'].copy()
+        cam_action = dataset[args.viz_subject][args.viz_action]['cameras']
     if ground_truth is None:
         print('INFO: this action is unlabeled. Ground truth will not be rendered.')
-        
-    gen = UnchunkedGenerator(action_cam, None, input_keypoints,
+    
+    # Keep in singleton list to mimic batch
+    cam_intrinsics = cam_action['intrinsics']
+    cam_extrinsics = cam_action['extrinsics']
+
+    gen = UnchunkedGenerator([cam_intrinsics], [cam_extrinsics], [ground_truth], [input_keypoints],
                              pad=pad, causal_shift=causal_shift, augment=False, #augment=args.test_time_augmentation,
                              kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
     prediction = evaluate(gen, return_predictions=True)
