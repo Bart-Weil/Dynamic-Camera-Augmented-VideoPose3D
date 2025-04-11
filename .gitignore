@@ -1,6 +1,6 @@
 **/*checkpoint*/
 venv/
-output*
+*.mp4
 __pycache__
 out
 data/*.npz
