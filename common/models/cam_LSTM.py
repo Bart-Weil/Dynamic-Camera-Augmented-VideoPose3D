@@ -84,6 +84,7 @@ class CoupledLSTM(nn.Module):
 
         return mlp_out
 
+
     def sliding_window(self, inputs_2d, inputs_cam, window_size):
         # Sliding window approach
         predictions = []
@@ -95,4 +96,3 @@ class CoupledLSTM(nn.Module):
             predictions.append(pred)
 
         return torch.stack(predictions, dim=0)
-

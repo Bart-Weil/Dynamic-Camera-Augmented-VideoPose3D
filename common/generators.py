@@ -153,7 +153,7 @@ class ChunkedGenerator:
                 if self.endless:
                     self.state = (b_i + 1, pairs)
                 
-                yield self.batch_cam[:len(chunks)], self.batch_3d[:len(chunks)], self.batch_2d[:len(chunks)]
+                yield self.batch_cam, self.batch_3d, self.batch_2d
             
             if self.endless:
                 self.state = None
@@ -198,7 +198,7 @@ class UnchunkedGenerator:
         self.poses_3d = [] if poses_3d is None else poses_3d
         self.poses_2d = poses_2d
         self.seq_length = 1 + 2*pad
-        
+ 
     def num_frames(self):
         count = 0
         for p in self.poses_2d:
@@ -252,3 +252,4 @@ class UnchunkedGenerator:
             #     batch_2d[1, :, self.kps_left + self.kps_right] = batch_2d[1, :, self.kps_right + self.kps_left]
 
             yield batch_cam, batch_3d, batch_2d
+

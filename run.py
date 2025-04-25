@@ -191,6 +191,7 @@ if action_filter is not None:
     
 cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_test, action_filter)
 
+print("Evaluation Subjects: ", ", ".join(subjects_test))
 
 match args.model_name:
     case 'FCN':
@@ -275,6 +276,7 @@ test_generator = UnchunkedGenerator(cameras_valid_intrinsics, cameras_valid_extr
 print('INFO: Testing on {} frames'.format(test_generator.num_frames()))
 
 if not args.evaluate:
+    print("Training Subjects: ", ", ".join(subjects_train))
     cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
     
     cameras_train_intrinsics = [cam_seq['intrinsics'] for cam_seq in cameras_train]
@@ -366,116 +368,34 @@ if not args.evaluate:
         N = 0
         N_semi = 0
         model_pos_train.train()
-        if semi_supervised:
-            # Semi-supervised scenario
-            model_traj_train.train()
-            for (_, batch_3d, batch_2d), (cam_semi, _, batch_2d_semi) in \
-                zip(train_generator.next_epoch(), semi_generator.next_epoch()):
-                
-                # Fall back to supervised training for the first epoch (to avoid instability)
-                skip = epoch < args.warmup
-                
-                cam_semi = torch.from_numpy(cam_semi.astype('float32'))
-                inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
-                if torch.cuda.is_available():
-                    cam_semi = cam_semi.cuda()
-                    inputs_3d = inputs_3d.cuda()
-                    
-                inputs_traj = inputs_3d[:, :, :1].clone()
-                inputs_3d[:, :, 0] = 0
-                
-                # Split point between labeled and unlabeled samples in the batch
-                split_idx = inputs_3d.shape[0]
 
-                inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                inputs_2d_semi = torch.from_numpy(batch_2d_semi.astype('float32'))
-                if torch.cuda.is_available():
-                    inputs_2d = inputs_2d.cuda()
-                    inputs_2d_semi = inputs_2d_semi.cuda()
-                inputs_2d_cat =  torch.cat((inputs_2d, inputs_2d_semi), dim=0) if not skip else inputs_2d
+        for batch_cam, batch_3d, batch_2d in train_generator.next_epoch():
+            inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
+            inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+            inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
+            if torch.cuda.is_available():
+                inputs_3d = inputs_3d.cuda()
+                inputs_2d = inputs_2d.cuda()
+                inputs_cam = inputs_cam.cuda()
+            inputs_3d[:, :, 0] = 0
 
-                optimizer.zero_grad()
+            optimizer.zero_grad()
 
-                # Compute 3D poses
-                predicted_3d_pos_cat = model_pos_train(inputs_2d_cat)
+            # Predict 3D poses
+            if type(model_pos_train) == CoupledLSTM:
+                predicted_3d_pos_flat = model_pos_train(inputs_2d, inputs_cam)
+                predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
+            elif type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
+                predicted_3d_pos = model_pos_train(inputs_2d)
 
-                loss_3d_pos = mpjpe(predicted_3d_pos_cat[:split_idx], inputs_3d)
-                epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
-                N += inputs_3d.shape[0]*inputs_3d.shape[1]
-                loss_total = loss_3d_pos
+            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+            epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
+            N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
-                # Compute global trajectory
-                predicted_traj_cat = model_traj_train(inputs_2d_cat)
-                w = 1 / inputs_traj[:, :, :, 2] # Weight inversely proportional to depth
-                loss_traj = weighted_mpjpe(predicted_traj_cat[:split_idx], inputs_traj, w)
-                epoch_loss_traj_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_traj.item()
-                assert inputs_traj.shape[0]*inputs_traj.shape[1] == inputs_3d.shape[0]*inputs_3d.shape[1]
-                loss_total += loss_traj
+            loss_total = loss_3d_pos
+            loss_total.backward()
 
-                if not skip:
-                    # Semi-supervised loss for unlabeled samples
-                    predicted_semi = predicted_3d_pos_cat[split_idx:]
-                    if pad > 0:
-                        target_semi = inputs_2d_semi[:, pad:-pad, :, :2].contiguous()
-                    else:
-                        target_semi = inputs_2d_semi[:, :, :, :2].contiguous()
-                        
-                    projection_func = project_to_2d_linear if args.linear_projection else project_to_2d
-                    reconstruction_semi = projection_func(predicted_semi + predicted_traj_cat[split_idx:], cam_semi)
-
-                    loss_reconstruction = mpjpe(reconstruction_semi, target_semi) # On 2D poses
-                    epoch_loss_2d_train_unlabeled += predicted_semi.shape[0]*predicted_semi.shape[1] * loss_reconstruction.item()
-                    if not args.no_proj:
-                        loss_total += loss_reconstruction
-                    
-                    # Bone length term to enforce kinematic constraints
-                    if args.bone_length_term:
-                        dists = predicted_3d_pos_cat[:, :, 1:] - predicted_3d_pos_cat[:, :, dataset.skeleton().parents()[1:]]
-                        bone_lengths = torch.mean(torch.linalg.norm(dists, dim=3), dim=1)
-                        penalty = torch.mean(torch.abs(torch.mean(bone_lengths[:split_idx], dim=0) \
-                                                     - torch.mean(bone_lengths[split_idx:], dim=0)))
-                        loss_total += penalty
-                        
-                    
-                    N_semi += predicted_semi.shape[0]*predicted_semi.shape[1]
-                else:
-                    N_semi += 1 # To avoid division by zero
-
-                loss_total.backward()
-
-                optimizer.step()
-            losses_traj_train.append(epoch_loss_traj_train / N)
-            losses_2d_train_unlabeled.append(epoch_loss_2d_train_unlabeled / N_semi)
-        else:
-            # Regular supervised scenario
-            for batch_cam, batch_3d, batch_2d in train_generator.next_epoch():
-                inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
-                inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
-                if torch.cuda.is_available():
-                    inputs_3d = inputs_3d.cuda()
-                    inputs_2d = inputs_2d.cuda()
-                    inputs_cam = inputs_cam.cuda()
-                inputs_3d[:, :, 0] = 0
-
-                optimizer.zero_grad()
-
-                # Predict 3D poses
-                if type(model_pos_train) == CoupledLSTM:
-                    predicted_3d_pos_flat = model_pos_train(inputs_2d, inputs_cam)
-                    predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
-                elif type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
-                    predicted_3d_pos = model_pos_train(inputs_2d)
-
-                print(predicted_3d_pos.shape, inputs_3d.shape)
-                loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
-                epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
-                N += inputs_3d.shape[0]*inputs_3d.shape[1]
-
-                loss_total = loss_3d_pos
-                loss_total.backward()
-
-                optimizer.step()
+            optimizer.step()
 
         losses_3d_train.append(epoch_loss_3d_train / N)
 
