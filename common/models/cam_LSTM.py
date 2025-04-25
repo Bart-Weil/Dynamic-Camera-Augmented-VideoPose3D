@@ -86,13 +86,22 @@ class CoupledLSTM(nn.Module):
 
 
     def sliding_window(self, inputs_2d, inputs_cam, window_size):
-        # Sliding window approach
-        predictions = []
-        for t in range(inputs_2d.shape[1] - window_size + 1):
-            input_window = inputs_2d[:, t:t+window_size]
-            cam_window = inputs_cam[:, t:t+window_size]
+        # inputs_2d : (B, T, J_in, F)
+        # inputs_cam: (B, T, 3, 4)
+        B, T, _, _ = inputs_2d.shape
+        num_windows = T - window_size + 1
 
-            pred = self(input_window, cam_window)
-            predictions.append(pred)
+        # create strided views with unfold → (B, num_windows, window, …)
+        win_2d  = inputs_2d.unfold(1, window_size, 1)
+        win_cam = inputs_cam.unfold(1, window_size, 1)
 
-        return torch.stack(predictions, dim=0)
+        # merge B and W so the model sees a big batch
+        win_2d  = win_2d.contiguous().view(-1, window_size,
+                                           self.num_joints_in, self.in_features)
+        win_cam = win_cam.contiguous().view(-1, window_size,
+                                            *self.cam_mat_shape)
+
+        preds = self(win_2d, win_cam)
+
+        preds = preds.view(B, num_windows, -1).permute(1, 0, 2)
+        return preds
