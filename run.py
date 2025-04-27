@@ -191,6 +191,7 @@ if action_filter is not None:
     
 cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_test, action_filter)
 
+print("Subjects: ", dataset.subjects())
 print("Evaluation Subjects: ", ", ".join(subjects_test))
 
 match args.model_name:
