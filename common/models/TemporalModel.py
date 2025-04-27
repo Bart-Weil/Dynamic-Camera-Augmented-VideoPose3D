@@ -32,7 +32,6 @@ class TemporalModelBase(nn.Module):
         self.expand_bn = nn.BatchNorm1d(channels, momentum=0.1)
         self.shrink = nn.Conv1d(channels, num_joints_out*3, 1)
 
-
     def set_bn_momentum(self, momentum):
         self.expand_bn.momentum = momentum
         for bn in self.layers_bn:

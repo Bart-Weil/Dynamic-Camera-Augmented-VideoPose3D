@@ -9,8 +9,6 @@ import numpy as np
 
 import pickle
 from common.arguments import parse_args
-from common.models.temporal_FCNs import TemporalModel, TemporalModelOptimized1f
-from common.models.cam_LSTM import CoupledLSTM
 import torch
 
 import torch.nn as nn
@@ -21,7 +19,8 @@ import sys
 import errno
 
 from common.camera import *
-from common.models.temporal_FCNs import *
+from common.models.TemporalModel import *
+from common.models.CamLSTM import *
 from common.loss import *
 from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
@@ -62,7 +61,7 @@ for subject in dataset.subjects():
         anim = dataset[subject][action]
         
         if 'positions' in anim:
-            if type(dataset) == CMUMocapDataset:
+            if isinstance(dataset, CMUMocapDataset):
                 pos_3d = anim['positions']
                 pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
@@ -89,7 +88,7 @@ for subject in dataset.subjects():
         if 'positions_3d' not in dataset[subject][action]:
             continue
             
-        if type(dataset) != CMUMocapDataset:
+        if not isinstance(dataset, CMUMocapDataset):
             for cam_idx in range(len(keypoints[subject][action])):
                 
                 # We check for >= instead of == because some videos in H3.6M contain extra frames
@@ -104,7 +103,7 @@ for subject in dataset.subjects():
         
 for subject in keypoints.keys():
     for action in keypoints[subject]:
-        if type(dataset) == CMUMocapDataset:
+        if isinstance(dataset, CMUMocapDataset):
             kps = keypoints[subject][action]
             intrinsics = dataset.cameras()[subject][action]['intrinsics']
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics['res_w'], h=intrinsics['res_h'])
@@ -147,7 +146,7 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
                 out_poses_2d.append(poses_2d[i])
                 
             if subject in dataset.cameras():
-                if type(dataset) == CMUMocapDataset:
+                if isinstance(dataset, CMUMocapDataset):
                     out_camera_params.append(dataset.cameras()[subject][action])
                 else:
                     cams = dataset.cameras()[subject]
@@ -221,7 +220,7 @@ match args.model_name:
         else:
             causal_shift = 0
 
-    case 'LSTM':
+    case 'LSTM-Coupled':
          # Default sequence padding values
         pad = 13
         causal_shift = 0
@@ -233,6 +232,21 @@ match args.model_name:
                                       dropout=args.lstm_dropout)
         
         model_pos = CoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
+                                      dropout=args.lstm_dropout)
+        
+    case 'LSTM-Uncoupled':
+         # Default sequence padding values
+        pad = 13
+        causal_shift = 0
+
+        lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
+        
+        model_pos_train = UncoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
+                                      dropout=args.lstm_dropout)
+        
+        model_pos = UncoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
                                       hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
                                       dropout=args.lstm_dropout)
 
@@ -383,10 +397,9 @@ if not args.evaluate:
             optimizer.zero_grad()
 
             # Predict 3D poses
-            if type(model_pos_train) == CoupledLSTM:
-                predicted_3d_pos_flat = model_pos_train(inputs_2d, inputs_cam)
-                predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
-            elif type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
+            if isinstance(model_pos_train, CoupledLSTM):
+                predicted_3d_pos = model_pos_train(inputs_2d, inputs_cam)
+            elif isinstance(model_pos_train, TemporalModelBase):
                 predicted_3d_pos = model_pos_train(inputs_2d)
 
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
@@ -427,12 +440,10 @@ if not args.evaluate:
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
-                    if type(model_pos) == CoupledLSTM:
-                        predictions_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam,
+                    if isinstance(model_pos, CamLSTMBase):
+                        predictions_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam,
                                                                            test_generator.seq_length)
-
-                        predicted_3d_pos = predictions_3d_pos_flat.reshape(inputs_3d.shape)
-                    elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+                    elif isinstance(model_pos, TemporalModelBase):
                         predicted_3d_pos = model_pos(inputs_2d)
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_valid += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
@@ -484,10 +495,9 @@ if not args.evaluate:
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
-                    if type(model_pos) == CoupledLSTM:
-                        predicted_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam, train_generator.seq_length)
-                        predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
-                    elif type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+                    if isinstance(model_pos, CamLSTMBase):
+                        predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, train_generator.seq_length)
+                    elif isinstance(model_pos, TemporalModelBase):
                         predicted_3d_pos = model_pos(inputs_2d)
 
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
@@ -581,7 +591,7 @@ if not args.evaluate:
         epoch += 1
         
         # Decay BatchNorm momentum
-        if type(model_pos_train) == TemporalModel or type(model_pos_train) == TemporalModelOptimized1f:
+        if isinstance(model_pos_train, TemporalModelBase):
             momentum = initial_momentum * np.exp(-epoch/args.epochs * np.log(initial_momentum/final_momentum))
             model_pos_train.set_bn_momentum(momentum)
 
@@ -709,14 +719,13 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
                 inputs_3d = inputs_3d[:1]
 
             # Positional model
-            if type(model_pos) == TemporalModel or type(model_pos) == TemporalModelOptimized1f:
+            if isinstance(model_pos, TemporalModelBase):
                 if not use_trajectory_model:
                     predicted_3d_pos = model_pos(inputs_2d)
                 else:
                     predicted_3d_pos = model_traj(inputs_2d)
             else:
-                predicted_3d_pos_flat = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
-                predicted_3d_pos = predicted_3d_pos_flat.reshape(inputs_3d.shape)
+                predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
 
             # Test-time augmentation (if enabled)
             if test_generator.augment_enabled():

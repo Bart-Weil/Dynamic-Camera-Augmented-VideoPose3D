@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument('--export-training-curves', action='store_true', help='save training curves as .png images')
 
     # Model selection
-    parser.add_argument('--use-model', dest='model_name', default='FCN', type=str, help='FCN, LSTM')
+    parser.add_argument('--use-model', dest='model_name', default='FCN', type=str, help='FCN, LSTM-Uncoupled, LSTM-Coupled')
 
     # Learning arguments
     parser.add_argument('-e', '--epochs', default=60, type=int, metavar='N', help='number of training epochs')
