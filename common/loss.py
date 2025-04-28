@@ -15,6 +15,8 @@ def mpjpe(predicted, target):
     """
     assert predicted.shape == target.shape
     return torch.mean(torch.linalg.norm(predicted - target, dim=len(target.shape)-1))
+
+
     
 def weighted_mpjpe(predicted, target, w):
     """

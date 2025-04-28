@@ -63,7 +63,7 @@ for subject in dataset.subjects():
         if 'positions' in anim:
             if isinstance(dataset, CMUMocapDataset):
                 pos_3d = anim['positions']
-                pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                # pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
             else:
                 positions_3d = []
@@ -227,13 +227,23 @@ match args.model_name:
 
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
         
-        model_pos_train = CoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
-                                      dropout=args.lstm_dropout)
+        model_pos_train = CoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
+                                in_features = poses_valid_2d[0].shape[-1],
+                                num_joints_out = poses_valid[0].shape[-2],
+                                out_features = poses_valid[0].shape[-1],
+                                hidden_size = args.lstm_hidden_features,
+                                num_cells = args.lstm_cells, 
+                                head_layers = lstm_head_layers,
+                                dropout = args.lstm_dropout)
         
-        model_pos = CoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
-                                      dropout=args.lstm_dropout)
+        model_pos = CoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
+                                in_features = poses_valid_2d[0].shape[-1],
+                                num_joints_out = poses_valid[0].shape[-2],
+                                out_features = poses_valid[0].shape[-1],
+                                hidden_size = args.lstm_hidden_features,
+                                num_cells = args.lstm_cells, 
+                                head_layers = lstm_head_layers,
+                                dropout = args.lstm_dropout)
         
     case 'LSTM-Uncoupled':
          # Default sequence padding values
@@ -242,13 +252,23 @@ match args.model_name:
 
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
         
-        model_pos_train = UncoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
-                                      dropout=args.lstm_dropout)
+        model_pos_train = UncoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
+                                in_features = poses_valid_2d[0].shape[-1],
+                                num_joints_out = dataset.skeleton().num_joints(),
+                                out_features = poses_valid[0].shape[-1],
+                                hidden_size = args.lstm_hidden_features,
+                                num_cells = args.lstm_cells, 
+                                head_layers = lstm_head_layers,
+                                dropout = args.lstm_dropout)
         
-        model_pos = UncoupledLSTM(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
-                                      hidden_size=args.lstm_hidden_features, num_cells=args.lstm_cells, head_layers=lstm_head_layers,
-                                      dropout=args.lstm_dropout)
+        model_pos = UncoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
+                                in_features = poses_valid_2d[0].shape[-1],
+                                num_joints_out = poses_valid[0].shape[-2],
+                                out_features = poses_valid[0].shape[-1],
+                                hidden_size = args.lstm_hidden_features,
+                                num_cells = args.lstm_cells, 
+                                head_layers = lstm_head_layers,
+                                dropout = args.lstm_dropout)
 
 model_params = 0
 for parameter in model_pos.parameters():
@@ -397,7 +417,7 @@ if not args.evaluate:
             optimizer.zero_grad()
 
             # Predict 3D poses
-            if isinstance(model_pos_train, CoupledLSTM):
+            if isinstance(model_pos_train, CamLSTMBase):
                 predicted_3d_pos = model_pos_train(inputs_2d, inputs_cam)
             elif isinstance(model_pos_train, TemporalModelBase):
                 predicted_3d_pos = model_pos_train(inputs_2d)
@@ -407,7 +427,7 @@ if not args.evaluate:
             N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
             loss_total = loss_3d_pos
-            loss_total.backward()
+            # loss_total.backward()
 
             optimizer.step()
 
@@ -441,10 +461,11 @@ if not args.evaluate:
 
                     # Predict 3D poses
                     if isinstance(model_pos, CamLSTMBase):
-                        predictions_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam,
-                                                                           test_generator.seq_length)
+                        predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam,
+                                                                      test_generator.seq_length)
                     elif isinstance(model_pos, TemporalModelBase):
                         predicted_3d_pos = model_pos(inputs_2d)
+
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_valid += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
