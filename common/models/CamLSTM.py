@@ -131,6 +131,7 @@ class UncoupledLSTM(CamLSTMBase):
         head_layers -- layer sizes for MLP head
         dropout -- dropout probability
         """
+        raise NotImplementedError("UncoupledLSTM data pipeline not implemented on main branch, use uncoupled-lstm branch instead")
         super().__init__(num_joints_in, in_features, num_joints_out, out_features,
             hidden_size, num_cells, head_layers)
 
