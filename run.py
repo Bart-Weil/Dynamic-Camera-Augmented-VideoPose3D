@@ -427,7 +427,7 @@ if not args.evaluate:
             N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
             loss_total = loss_3d_pos
-            # loss_total.backward()
+            loss_total.backward()
 
             optimizer.step()
 
