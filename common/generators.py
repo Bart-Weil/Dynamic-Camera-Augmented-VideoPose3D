@@ -33,7 +33,7 @@ class ChunkedGenerator:
                  kps_left=None, kps_right=None, joints_left=None, joints_right=None,
                  endless=False):
         assert len(poses_3d) == len(poses_2d), (len(poses_3d), len(poses_2d))
-        assert len(extrinsics) == len(poses_2d)
+        assert len(cams) == len(poses_2d)
     
         # Build lineage info
         pairs = [] # (seq_idx, start_frame, end_frame) tuples

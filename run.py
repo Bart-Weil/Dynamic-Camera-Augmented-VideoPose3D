@@ -21,6 +21,7 @@ import errno
 from common.camera import *
 from common.models.TemporalModel import *
 from common.models.CamLSTM import *
+from common.models.CamTransformer import *
 from common.loss import *
 from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
@@ -410,7 +411,7 @@ if not args.evaluate:
             optimizer.zero_grad()
 
             # Predict 3D poses
-            if isinstance(model_pos_train, CamLSTMBase):
+            if isinstance(model_pos_train, (CamLSTMBase, CamTransformerBase)):
                 predicted_3d_pos = model_pos_train(inputs_2d, inputs_cam)
             elif isinstance(model_pos_train, TemporalModelBase):
                 predicted_3d_pos = model_pos_train(inputs_2d)
@@ -450,7 +451,7 @@ if not args.evaluate:
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
-                    if isinstance(model_pos, CamLSTMBase):
+                    if isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
                         predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam,
                                                                       test_generator.seq_length)
                     elif isinstance(model_pos, TemporalModelBase):
@@ -484,7 +485,7 @@ if not args.evaluate:
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
-                    if isinstance(model_pos, CamLSTMBase):
+                    if isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
                         predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, train_generator.seq_length)
                     elif isinstance(model_pos, TemporalModelBase):
                         predicted_3d_pos = model_pos(inputs_2d)
