@@ -40,12 +40,11 @@ if __name__ == '__main__':
         subjects = os.listdir(args.from_source)
         print('Converting original CMU Cameras dataset from', args.from_source)
         positions_3d = {}
-        cam_extrinsics = {}
+        cam_seqs = {}
 
-        for subject in tqdm(subjects[:1]):
-            print(subject)
+        for subject in tqdm(subjects[:5]):
             positions_3d[subject] = {}
-            cam_extrinsics[subject] = {}
+            cam_seqs[subject] = {}
             # if benchmark flag set, only convert .pkl files containing _benchmark
             file_list = glob(args.from_source + '/' + subject + '/*.pkl')
             if args.convert_benchmark:
@@ -56,26 +55,21 @@ if __name__ == '__main__':
             for f in file_list:
                 scene_file = open(f, "rb")
                 scene_data = pickle.load(scene_file)
-                position_frames = list(scene_data['pose_3d'].reshape(-1, 17, 3).astype('float32'))
+                positions = scene_data['pose_3d'].reshape(-1, 17, 3).astype('float32')
 
-                num_frames = len(position_frames)
+                positions_hom = np.concatenate([positions, 
+                    np.ones((positions.shape[0], positions.shape[1], 1), dtype='float32')], axis=2)
 
-                extrinsics = scene_data['cam_sequence']['cam_extrinsic'].reshape(-1, 3, 4)
-                orientations = list(extrinsics[:, :, :3])
-                opt_centers = list(scene_data['cam_sequence']['opt_center'].reshape(-1, 1, 3).astype('float32'))
+                cam_positions = np.einsum('tij,tnj->tni', scene_data['cam_sequence']['cam_extrinsic'], positions_hom)
 
-                cam_position_frames = []
-                for i in range(num_frames):
-                    # VideoPose3D camera functions expect an array of frames
-                    cam_position_frame = (position_frames[i] - opt_centers[i]) @ orientations[i].T
-                    cam_position_frame[:, 1] = -cam_position_frame[:, 1]
-                    cam_position_frames.append(cam_position_frame.astype('float32'))
+                cam_positions[:, :, 1] = -cam_positions[:, :, 1]
 
-                positions_3d[subject][f] = np.array(cam_position_frames)
-                cam_extrinsics[subject][f] = extrinsics
+                positions_3d[subject][f] = cam_positions
+                cam_seqs[subject][f] = scene_data['cam_sequence']
+                
 
         print('Saving...')
-        np.savez_compressed(output_filename, positions_3d=positions_3d, cam_extrinsics=cam_extrinsics)
+        np.savez_compressed(output_filename, positions_3d=positions_3d, cam_seqs=cam_seqs)
         
         print('Done.')
             

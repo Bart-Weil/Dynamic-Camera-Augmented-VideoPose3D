@@ -25,7 +25,7 @@ class CMUMocapDataset(MocapDataset):
         data = np.load(path, allow_pickle=True)
 
         pose_data = data['positions_3d'].item()
-        cam_extrinsics = data['cam_extrinsics'].item()
+        cam_seqs = data['cam_seqs'].item()
 
         self._data = {}
         self._cameras = {}
@@ -60,13 +60,19 @@ class CMUMocapDataset(MocapDataset):
             self._data[subject] = {}
             self._cameras[subject] = {}
             for action_name, positions in actions.items():
-                extrinsics_for_action = cam_extrinsics[subject][action_name]
+                cam_seq = cam_seqs[subject][action_name]
                 num_frames = positions.shape[0]
-                assert len(extrinsics_for_action) == num_frames, (
-                    f"Number of extrinsics ({len(extrinsics_for_action)}) does not match number of frames ({num_frames}) "
+                assert len(cam_seq['cam_extrinsic']) == num_frames, (
+                    f"Number of extrinsics ({len(cam_seq)}) does not match number of frames ({num_frames}) "
                     f"for subject {subject} action {action_name}"
                 )
-                cameras_for_action = {'intrinsics': CMU_cam_intrinsic, 'extrinsics': extrinsics_for_action}
+
+                cameras_for_action = {'intrinsics': CMU_cam_intrinsic,
+                                      'extrinsics': cam_seq['cam_extrinsic'],
+                                      'cam_velocity': cam_seq['cam_velocity'],
+                                      'cam_acceleration': cam_seq['cam_acceleration'],
+                                      'cam_angular_velocity': cam_seq['cam_angular_velocity'],
+                                      'cam_angular_acceleration': cam_seq['cam_angular_acceleration']}
 
                 # Store positions and the per-frame cameras in the same structure.
                 self._data[subject][action_name] = {

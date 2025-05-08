@@ -63,7 +63,7 @@ for subject in dataset.subjects():
         if 'positions' in anim:
             if isinstance(dataset, CMUMocapDataset):
                 pos_3d = anim['positions']
-                # pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
             else:
                 positions_3d = []
@@ -121,10 +121,6 @@ if not args.render:
     subjects_test = args.subjects_test.split(',')
 else:
     subjects_test = [args.viz_subject]
-
-semi_supervised = len(subjects_semi) > 0
-if semi_supervised and not dataset.supports_semi_supervised():
-    raise RuntimeError('Semi-supervised training is not implemented for this dataset')
             
 def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
     out_poses_3d = []
@@ -210,7 +206,7 @@ match args.model_name:
         model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
                                     filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                     dense=args.dense)
-        
+
         receptive_field = model_pos.receptive_field()
         print('INFO: Receptive field: {} frames'.format(receptive_field))
         pad = (receptive_field - 1) // 2 # Padding on each side
@@ -221,10 +217,13 @@ match args.model_name:
             causal_shift = 0
 
     case 'LSTM-Coupled':
-         # Default sequence padding values
-        pad = 13
-        causal_shift = 0
-
+        receptive_field = 243
+        pad = (receptive_field - 1) // 2 # Padding on each side
+        if args.causal:
+            print('INFO: Using causal convolutions')
+            causal_shift = pad
+        else:
+            causal_shift = 0
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
         
         model_pos_train = CoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
@@ -245,10 +244,51 @@ match args.model_name:
                                 head_layers = lstm_head_layers,
                                 dropout = args.lstm_dropout)
         
+    case 'Transformer':
+        receptive_field = 243
+        pad = (receptive_field - 1) // 2 # Padding on each side
+        if args.causal:
+            print('INFO: Using causal convolutions')
+            causal_shift = pad
+        else:
+            causal_shift = 0
+
+        # Parse the transformer head architecture
+        transformer_head_layers = [int(x) for x in args.transformer_head_architecture.split(',')]
+
+        model_pos_train = CoupledTransformer(
+            num_joints_in = poses_valid_2d[0].shape[-2],
+            in_features = poses_valid_2d[0].shape[-1],
+            num_joints_out = poses_valid[0].shape[-2],
+            out_features = poses_valid[0].shape[-1],
+            d_model = args.d_model,
+            num_layers = args.num_layers,
+            nhead = args.nhead,
+            dim_feedforward = args.dim_feedforward,
+            head_layers = transformer_head_layers,
+            dropout = args.transformer_dropout
+        )
+
+        model_pos = CoupledTransformer(
+            num_joints_in = poses_valid_2d[0].shape[-2],
+            in_features = poses_valid_2d[0].shape[-1],
+            num_joints_out = poses_valid[0].shape[-2],
+            out_features = poses_valid[0].shape[-1],
+            d_model = args.d_model,
+            num_layers = args.num_layers,
+            nhead = args.nhead,
+            dim_feedforward = args.dim_feedforward,
+            head_layers = transformer_head_layers,
+            dropout = args.transformer_dropout
+        )
     case 'LSTM-Uncoupled':
-         # Default sequence padding values
-        pad = 13
-        causal_shift = 0
+        receptive_field = 243
+        pad = (receptive_field - 1) // 2 # Padding on each side
+        if args.causal:
+            print('INFO: Using causal convolutions')
+            causal_shift = pad
+        else:
+            causal_shift = 0
 
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
         
@@ -269,6 +309,8 @@ match args.model_name:
                                 num_cells = args.lstm_cells, 
                                 head_layers = lstm_head_layers,
                                 dropout = args.lstm_dropout)
+    case _:
+        raise KeyError('Invalid model name')
 
 model_params = 0
 for parameter in model_pos.parameters():
@@ -302,54 +344,18 @@ if args.resume or args.evaluate:
     else:
         model_traj = None
 
-cameras_valid_intrinsics = [cam_seq['intrinsics'] for cam_seq in cameras_valid]
-cameras_valid_extrinsics = [cam_seq['extrinsics'] for cam_seq in cameras_valid]
-
-test_generator = UnchunkedGenerator(cameras_valid_intrinsics, cameras_valid_extrinsics, poses_valid, poses_valid_2d,
-                                    pad=pad, causal_shift=causal_shift, augment=False,
+test_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
+                                    pad=pad, causal_shift=causal_shift,
                                     kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
 print('INFO: Testing on {} frames'.format(test_generator.num_frames()))
 
 if not args.evaluate:
     print("Training Subjects: ", ", ".join(subjects_train))
     cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
-    
-    cameras_train_intrinsics = [cam_seq['intrinsics'] for cam_seq in cameras_train]
-    cameras_train_extrinsics = [cam_seq['extrinsics'] for cam_seq in cameras_train]
 
     lr = args.learning_rate
-    if semi_supervised:
-        cameras_semi, _, poses_semi_2d = fetch(subjects_semi, action_filter, parse_3d_poses=False)
-        
-        if not args.disable_optimizations and not args.dense and args.stride == 1:
-            # Use optimized model for single-frame predictions
-            model_traj_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                    filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
-        else:
-            # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
-            model_traj_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                    filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
-                    dense=args.dense)
-        
-        model_traj = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                            filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
-                            dense=args.dense)
-        if torch.cuda.is_available():
-            model_traj = model_traj.cuda()
-            model_traj_train = model_traj_train.cuda()
-        optimizer = optim.Adam(list(model_pos_train.parameters()) + list(model_traj_train.parameters()),
-                               lr=lr, amsgrad=True)
-        
-        losses_2d_train_unlabeled = []
-        losses_2d_train_labeled_eval = []
-        losses_2d_train_unlabeled_eval = []
-        losses_2d_valid = []
 
-        losses_traj_train = []
-        losses_traj_train_eval = []
-        losses_traj_valid = []
-    else:
-        optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
+    optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
         
     lr_decay = args.lr_decay
 
@@ -361,21 +367,12 @@ if not args.evaluate:
     initial_momentum = 0.1
     final_momentum = 0.001
     
-    train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train_intrinsics, cameras_train_extrinsics, poses_train,
-                                       poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True, augment=args.data_augmentation,
+    train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train, poses_train,
+                                       poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True,
                                        kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-    train_generator_eval = UnchunkedGenerator(cameras_train_intrinsics, cameras_train_extrinsics, poses_train, poses_train_2d,
-                                              pad=pad, causal_shift=causal_shift, augment=False)
+    train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
+                                              pad=pad, causal_shift=causal_shift)
     print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
-    if semi_supervised:
-        semi_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_semi, None, poses_semi_2d, args.stride,
-                                          pad=pad, causal_shift=causal_shift, shuffle=True,
-                                          random_seed=4321, augment=args.data_augmentation,
-                                          kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right,
-                                          endless=True)
-        semi_generator_eval = UnchunkedGenerator(cameras_semi, None, poses_semi_2d,
-                                                 pad=pad, causal_shift=causal_shift, augment=False)
-        print('INFO: Semi-supervision on {} frames'.format(semi_generator_eval.num_frames()))
 
     if args.resume:
         epoch = checkpoint['epoch']
@@ -386,10 +383,6 @@ if not args.evaluate:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
         
         lr = checkpoint['lr']
-        if semi_supervised:
-            model_traj_train.load_state_dict(checkpoint['model_traj'])
-            model_traj.load_state_dict(checkpoint['model_traj'])
-            semi_generator.set_random_state(checkpoint['random_state_semi'])
             
     print('** Note: reported losses are averaged over all frames and test-time augmentation is not used here.')
     print('** The final evaluation will be carried out after the last training epoch.')
@@ -437,9 +430,6 @@ if not args.evaluate:
         with torch.no_grad():
             model_pos.load_state_dict(model_pos_train.state_dict())
             model_pos.eval()
-            if semi_supervised:
-                model_traj.load_state_dict(model_traj_train.state_dict())
-                model_traj.eval()
 
             epoch_loss_3d_valid = 0
             epoch_loss_traj_valid = 0
@@ -448,7 +438,7 @@ if not args.evaluate:
             
             if not args.no_eval:
                 # Evaluate on test set
-                for batch_cam, batch_3d, batch_2d in test_generator.next_epoch():
+                for batch_cam, batch_3d, batch_2d, _ in test_generator.next_epoch():
                     inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
                     inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
                     inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
@@ -470,29 +460,7 @@ if not args.evaluate:
                     epoch_loss_3d_valid += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
-                    if semi_supervised:
-                        cam = torch.from_numpy(cam.astype('float32'))
-                        if torch.cuda.is_available():
-                            cam = cam.cuda()
-
-                        predicted_traj = model_traj(inputs_2d)
-                        loss_traj = mpjpe(predicted_traj, inputs_traj)
-                        epoch_loss_traj_valid += inputs_traj.shape[0]*inputs_traj.shape[1] * loss_traj.item()
-                        assert inputs_traj.shape[0]*inputs_traj.shape[1] == inputs_3d.shape[0]*inputs_3d.shape[1]
-
-                        if pad > 0:
-                            target = inputs_2d[:, pad:-pad, :, :2].contiguous()
-                        else:
-                            target = inputs_2d[:, :, :, :2].contiguous()
-                        reconstruction = project_to_2d(predicted_3d_pos + predicted_traj, cam)
-                        loss_reconstruction = mpjpe(reconstruction, target) # On 2D poses
-                        epoch_loss_2d_valid += reconstruction.shape[0]*reconstruction.shape[1] * loss_reconstruction.item()
-                        assert reconstruction.shape[0]*reconstruction.shape[1] == inputs_3d.shape[0]*inputs_3d.shape[1]
-
                 losses_3d_valid.append(epoch_loss_3d_valid / N)
-                if semi_supervised:
-                    losses_traj_valid.append(epoch_loss_traj_valid / N)
-                    losses_2d_valid.append(epoch_loss_2d_valid / N)
 
                 # Evaluate on training set, this time in evaluation mode
                 epoch_loss_3d_train_eval = 0
@@ -525,53 +493,11 @@ if not args.evaluate:
                     epoch_loss_3d_train_eval += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
-                    if semi_supervised:
-                        cam = torch.from_numpy(cam.astype('float32'))
-                        if torch.cuda.is_available():
-                            cam = cam.cuda()
-                        predicted_traj = model_traj(inputs_2d)
-                        loss_traj = mpjpe(predicted_traj, inputs_traj)
-                        epoch_loss_traj_train_eval += inputs_traj.shape[0]*inputs_traj.shape[1] * loss_traj.item()
-                        assert inputs_traj.shape[0]*inputs_traj.shape[1] == inputs_3d.shape[0]*inputs_3d.shape[1]
-
-                        if pad > 0:
-                            target = inputs_2d[:, pad:-pad, :, :2].contiguous()
-                        else:
-                            target = inputs_2d[:, :, :, :2].contiguous()
-                        reconstruction = project_to_2d(predicted_3d_pos + predicted_traj, cam)
-                        loss_reconstruction = mpjpe(reconstruction, target)
-                        epoch_loss_2d_train_labeled_eval += reconstruction.shape[0]*reconstruction.shape[1] * loss_reconstruction.item()
-                        assert reconstruction.shape[0]*reconstruction.shape[1] == inputs_3d.shape[0]*inputs_3d.shape[1]
-
                 losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
-                if semi_supervised:
-                    losses_traj_train_eval.append(epoch_loss_traj_train_eval / N)
-                    losses_2d_train_labeled_eval.append(epoch_loss_2d_train_labeled_eval / N)
 
                 # Evaluate 2D loss on unlabeled training set (in evaluation mode)
                 epoch_loss_2d_train_unlabeled_eval = 0
                 N_semi = 0
-                if semi_supervised:
-                    for cam, _, batch_2d in semi_generator_eval.next_epoch():
-                        cam = torch.from_numpy(cam.astype('float32'))
-                        inputs_2d_semi = torch.from_numpy(batch_2d.astype('float32'))
-                        if torch.cuda.is_available():
-                            cam = cam.cuda()
-                            inputs_2d_semi = inputs_2d_semi.cuda()
-
-                        predicted_3d_pos_semi = model_pos(inputs_2d_semi)
-                        predicted_traj_semi = model_traj(inputs_2d_semi)
-                        if pad > 0:
-                            target_semi = inputs_2d_semi[:, pad:-pad, :, :2].contiguous()
-                        else:
-                            target_semi = inputs_2d_semi[:, :, :, :2].contiguous()
-                        reconstruction_semi = project_to_2d(predicted_3d_pos_semi + predicted_traj_semi, cam)
-                        loss_reconstruction_semi = mpjpe(reconstruction_semi, target_semi)
-
-                        epoch_loss_2d_train_unlabeled_eval += reconstruction_semi.shape[0]*reconstruction_semi.shape[1] \
-                                                              * loss_reconstruction_semi.item()
-                        N_semi += reconstruction_semi.shape[0]*reconstruction_semi.shape[1]
-                    losses_2d_train_unlabeled_eval.append(epoch_loss_2d_train_unlabeled_eval / N_semi)
 
         elapsed = (time() - start_time)/60
         
@@ -582,28 +508,13 @@ if not args.evaluate:
                     lr,
                     losses_3d_train[-1] * 1000))
         else:
-            if semi_supervised:
-                print('[%d] time %.2f lr %f 3d_train %f 3d_eval %f traj_eval %f 3d_valid %f '
-                      'traj_valid %f 2d_train_sup %f 2d_train_unsup %f 2d_valid %f' % (
-                        epoch + 1,
-                        elapsed,
-                        lr,
-                        losses_3d_train[-1] * 1000,
-                        losses_3d_train_eval[-1] * 1000,
-                        losses_traj_train_eval[-1] * 1000,
-                        losses_3d_valid[-1] * 1000,
-                        losses_traj_valid[-1] * 1000,
-                        losses_2d_train_labeled_eval[-1],
-                        losses_2d_train_unlabeled_eval[-1],
-                        losses_2d_valid[-1]))
-            else:
-                print('[%d] time %.2f lr %f 3d_train %f 3d_eval %f 3d_valid %f' % (
-                        epoch + 1,
-                        elapsed,
-                        lr,
-                        losses_3d_train[-1] * 1000,
-                        losses_3d_train_eval[-1] * 1000,
-                        losses_3d_valid[-1]  *1000))
+            print('[%d] time %.2f lr %f 3d_train %f 3d_eval %f 3d_valid %f' % (
+                    epoch + 1,
+                    elapsed,
+                    lr,
+                    losses_3d_train[-1] * 1000,
+                    losses_3d_train_eval[-1] * 1000,
+                    losses_3d_valid[-1]  *1000))
         
         # Decay learning rate exponentially
         lr *= lr_decay
@@ -615,9 +526,6 @@ if not args.evaluate:
         if isinstance(model_pos_train, TemporalModelBase):
             momentum = initial_momentum * np.exp(-epoch/args.epochs * np.log(initial_momentum/final_momentum))
             model_pos_train.set_bn_momentum(momentum)
-
-        if semi_supervised:
-            model_traj_train.set_bn_momentum(momentum)
             
         # Save checkpoint if necessary
         if epoch % args.checkpoint_frequency == 0:
@@ -630,8 +538,6 @@ if not args.evaluate:
                 'random_state': train_generator.random_state(),
                 'optimizer': optimizer.state_dict(),
                 'model_pos': model_pos_train.state_dict(),
-                'model_traj': model_traj_train.state_dict() if semi_supervised else None,
-                'random_state_semi': semi_generator.random_state() if semi_supervised else None,
             }, chk_path)
             
         # Save training curves after every epoch, as .png images (if requested)
@@ -652,27 +558,6 @@ if not args.evaluate:
             plt.xlim((3, epoch))
             plt.savefig(os.path.join(args.checkpoint, 'loss_3d.png'))
 
-            if semi_supervised:
-                plt.figure()
-                plt.plot(epoch_x, losses_traj_train[3:], '--', color='C0')
-                plt.plot(epoch_x, losses_traj_train_eval[3:], color='C0')
-                plt.plot(epoch_x, losses_traj_valid[3:], color='C1')
-                plt.legend(['traj. train', 'traj. train (eval)', 'traj. valid (eval)'])
-                plt.ylabel('Mean distance (m)')
-                plt.xlabel('Epoch')
-                plt.xlim((3, epoch))
-                plt.savefig(os.path.join(args.checkpoint, 'loss_traj.png'))
-
-                plt.figure()
-                plt.plot(epoch_x, losses_2d_train_labeled_eval[3:], color='C0')
-                plt.plot(epoch_x, losses_2d_train_unlabeled[3:], '--', color='C1')
-                plt.plot(epoch_x, losses_2d_train_unlabeled_eval[3:], color='C1')
-                plt.plot(epoch_x, losses_2d_valid[3:], color='C2')
-                plt.legend(['2d train labeled (eval)', '2d train unlabeled', '2d train unlabeled (eval)', '2d valid (eval)'])
-                plt.ylabel('MPJPE (2D)')
-                plt.xlabel('Epoch')
-                plt.xlim((3, epoch))
-                plt.savefig(os.path.join(args.checkpoint, 'loss_2d.png'))
             plt.close('all')
 
 # Evaluate
@@ -682,13 +567,8 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     epoch_loss_3d_pos_scale = 0
     epoch_loss_3d_vel = 0
 
-    # For frame-wise correlation
-    v_per_frame_rs = []
-    omega_per_frame_rs = []
-
-    # Average cam velocity for action wise error correlation
-    v_sum = 0
-    omega_sum = 0
+    cam_info_per_seq = []
+    e1_per_seq = []
 
     with torch.no_grad():
         if not use_trajectory_model:
@@ -697,35 +577,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             model_traj.eval()
         N = 0
 
-        for cams, batch, batch_2d in test_generator.next_epoch():
-            cam_pad_before = test_generator.pad + test_generator.causal_shift
-            cam_pad_after = test_generator.pad - test_generator.causal_shift
-            # 1st dimension is batch, 2nd is action frames, test generator returns singleton batches
-            unpadded_cams = cams[0, cam_pad_before:-cam_pad_after]
-
-            cam_orients = unpadded_cams[:, :, :3]
-            cam_positions = np.squeeze(np.matmul(-cam_orients.transpose([0, 2, 1]), unpadded_cams[:, :, 3:]))
-                
-            cam_vels = np.linalg.norm(np.diff(cam_positions, axis=0, prepend=cam_positions[[0]]), axis=1) * dataset.fps()
-            v_sum += np.sum(cam_vels)
-
-            # 20 frame moving average smoothing for per frame correlation
-            cam_vels = np.convolve(cam_vels, np.ones(20)/20, mode='same')
-
-            cam_rotations_offset = np.concatenate((cam_orients[0:1], cam_orients[:-1]), axis=0)
-            cam_rotations_offset = cam_rotations_offset.transpose(0, 2, 1)
-            cam_omega_tensors = np.matmul(cam_orients, cam_rotations_offset) * dataset.fps()
-
-            cam_anglular_vels = np.vstack([
-                cam_omega_tensors[:, 2, 1],
-                cam_omega_tensors[:, 0, 2],
-                cam_omega_tensors[:, 1, 0]]).T
-            cam_anglular_vels = np.linalg.norm(cam_anglular_vels, axis=1)
-            omega_sum += np.sum(cam_anglular_vels)
-
-            # Smoothing
-            cam_anglular_vels = np.convolve(cam_anglular_vels, np.ones(20)/20, mode='same')
-
+        for cams, batch, batch_2d, seq_info in test_generator.next_epoch():
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
             inputs_3d = torch.from_numpy(batch.astype('float32'))
             inputs_cam = torch.from_numpy(cams.astype('float32'))
@@ -736,8 +588,6 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
                 inputs_cam = inputs_cam.cuda()
 
             inputs_3d[:, :, 0] = 0    
-            if test_generator.augment_enabled():
-                inputs_3d = inputs_3d[:1]
 
             # Positional model
             if isinstance(model_pos, TemporalModelBase):
@@ -747,30 +597,19 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
                     predicted_3d_pos = model_traj(inputs_2d)
             else:
                 predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
-
-            # Test-time augmentation (if enabled)
-            if test_generator.augment_enabled():
-                # Undo flipping and take average with non-flipped version
-                predicted_3d_pos[1, :, :, 0] *= -1
-                if not use_trajectory_model:
-                    predicted_3d_pos[1, :, joints_left + joints_right] = predicted_3d_pos[1, :, joints_right + joints_left]
-                predicted_3d_pos = torch.mean(predicted_3d_pos, dim=0, keepdim=True)
                 
             if return_predictions:
                 return predicted_3d_pos.squeeze(0).cpu().numpy()
-                
             
             error = mpjpe(predicted_3d_pos, inputs_3d)
-            error_per_pose = torch.mean(torch.linalg.norm(predicted_3d_pos - inputs_3d, dim=len(inputs_3d.shape)-1), axis=2)
-            error_per_pose = np.squeeze(error_per_pose.cpu().numpy())
-            error_per_pose = inputs_3d.shape[0]*inputs_3d.shape[1] * error_per_pose
-
-            v_per_frame_rs.append(np.corrcoef(error_per_pose, cam_vels)[0, 1])
-            omega_per_frame_rs.append(np.corrcoef(error_per_pose, cam_anglular_vels)[0, 1])
 
             epoch_loss_3d_pos_scale += inputs_3d.shape[0]*inputs_3d.shape[1] * n_mpjpe(predicted_3d_pos, inputs_3d).item()
 
             epoch_loss_3d_pos += inputs_3d.shape[0]*inputs_3d.shape[1] * error.item()
+            
+            e1_per_seq.append(error.cpu().numpy())
+            cam_info_per_seq.append(seq_info)
+
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
             
             inputs = inputs_3d.cpu().numpy().reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1])
@@ -781,9 +620,6 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
             # Compute velocity error
             epoch_loss_3d_vel += inputs_3d.shape[0]*inputs_3d.shape[1] * mean_velocity_error(predicted_3d_pos, inputs)
-
-    avg_v = v_sum / N
-    avg_omega = omega_sum / N
     
     if action is None:
         print('----------')
@@ -793,20 +629,15 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     e2 = (epoch_loss_3d_pos_procrustes / N)*1000
     e3 = (epoch_loss_3d_pos_scale / N)*1000
     ev = (epoch_loss_3d_vel / N)*1000
-    frame_vel_r = np.mean(v_per_frame_rs)
-    frame_omega_r = np.mean(omega_per_frame_rs)
-    print('Test time augmentation:', test_generator.augment_enabled())
+
     print('Protocol #1 Error (MPJPE):', e1, 'mm')
     print('Protocol #2 Error (P-MPJPE):', e2, 'mm')
     print('Protocol #3 Error (N-MPJPE):', e3, 'mm')
     print('Velocity Error (MPJVE):', ev, 'mm')
-    print('Cam. velocity correlation (per frame):', frame_vel_r)
-    print('Cam. angular velocity correlation (per frame):', frame_omega_r)
-    print('Average cam. velocity:', avg_v)
     print('----------')
 
     # Return metrics and cam v, omega to use for action wise correlation
-    return e1, e2, e3, ev, frame_vel_r, frame_omega_r, avg_v, avg_omega
+    return e1, e2, e3, ev, e1_per_seq, cam_info_per_seq
 
 
 if args.render:
@@ -819,13 +650,9 @@ if args.render:
         cam_action = dataset[args.viz_subject][args.viz_action]['cameras']
     if ground_truth is None:
         print('INFO: this action is unlabeled. Ground truth will not be rendered.')
-    
-    # Keep in singleton list to mimic batch
-    cam_intrinsics = cam_action['intrinsics']
-    cam_extrinsics = cam_action['extrinsics']
 
-    gen = UnchunkedGenerator([cam_intrinsics], [cam_extrinsics], [ground_truth], [input_keypoints],
-                             pad=pad, causal_shift=causal_shift, augment=False, #augment=args.test_time_augmentation,
+    gen = UnchunkedGenerator([cam_action], [ground_truth], [input_keypoints],
+                             pad=pad, causal_shift=causal_shift,
                              kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
     prediction = evaluate(gen, return_predictions=True)
     if model_traj is not None and ground_truth is None:
@@ -914,8 +741,7 @@ else:
     def fetch_actions(actions):
         out_poses_3d = []
         out_poses_2d = []
-        out_cam_intrinsics = []
-        out_cam_extrinsics = []
+        out_cams = []
 
         for subject, action in actions:
             poses_2d = keypoints[subject][action]
@@ -927,8 +753,7 @@ else:
             for i in range(len(poses_3d)):
                 out_poses_3d.append(poses_3d[i])
 
-            out_cam_intrinsics.append(dataset._cameras[subject][action]['intrinsics'])
-            out_cam_extrinsics.append(dataset._cameras[subject][action]['extrinsics'])
+            out_cams.append(dataset._cameras[subject][action])
 
         stride = args.downsample
         if stride > 1:
@@ -938,17 +763,16 @@ else:
                 if out_poses_3d is not None:
                     out_poses_3d[i] = out_poses_3d[i][::stride]
         
-        return out_poses_3d, out_poses_2d, out_cam_intrinsics, out_cam_extrinsics
+        return out_poses_3d, out_poses_2d, out_cams
 
     def run_evaluation(actions, action_filter=None):
         errors_p1 = []
         errors_p2 = []
         errors_p3 = []
         errors_vel = []
-        v_per_frame_rs = []
-        omega_per_frame_rs = []
-        avg_vs = []
-        avg_omegas = []
+        
+        e1_actions = []
+        cam_info_actions = []
 
         for action_key in actions.keys():
             if action_filter is not None:
@@ -960,36 +784,53 @@ else:
                 if not found:
                     continue
 
-            poses_act, poses_2d_act, cam_intrinsics, cam_extrinsics = fetch_actions(actions[action_key])
-            gen = UnchunkedGenerator(cam_intrinsics, cam_extrinsics, poses_act, poses_2d_act,
-                                     pad=pad, causal_shift=causal_shift, augment=False,#args.test_time_augmentation,
+            poses_act, poses_2d_act, cams_act = fetch_actions(actions[action_key])
+            gen = UnchunkedGenerator(cams_act, poses_act, poses_2d_act,
+                                     pad=pad, causal_shift=causal_shift,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-            e1, e2, e3, ev, v_frame_r, omega_frame_r, avg_v, avg_omega = evaluate(gen, action_key)
+            e1, e2, e3, ev, e1_per_action, cam_info_per_action = evaluate(gen, action_key)
             errors_p1.append(e1)
             errors_p2.append(e2)
             errors_p3.append(e3)
             errors_vel.append(ev)
+            
+            e1_actions += e1_per_action
+            cam_info_actions += cam_info_per_action
 
-            v_per_frame_rs.append(v_frame_r)
-            omega_per_frame_rs.append(omega_frame_r)
+        cam_velocities = np.linalg.norm(np.array([cam_info['cam_velocity']
+            for cam_info in cam_info_actions]), axis=1)
+        cam_accelerations = np.linalg.norm(np.array([cam_info['cam_acceleration'] 
+            for cam_info in cam_info_actions]), axis=1)
+        cam_angular_velocities = np.linalg.norm(np.array([cam_info['cam_angular_velocity']
+            for cam_info in cam_info_actions]), axis=1)
+        cam_angular_accelerations = np.linalg.norm(np.array([cam_info['cam_angular_acceleration']
+            for cam_info in cam_info_actions]), axis=1)
 
-            avg_vs.append(avg_v)
-            avg_omegas.append(avg_omega)
+        e1_actions_arr = np.array(e1_actions)
+        print(e1_actions_arr.shape)
+        print(cam_velocities.shape)
 
-        mean_v_per_frame_r = np.mean(v_per_frame_rs)
-        mean_omega_per_frame_r = np.mean(omega_per_frame_rs)
+        # Compute PMCC between e1 and cam movement
+        corr_data = np.stack([
+            e1_actions_arr,
+            cam_velocities,
+            cam_accelerations,
+            cam_angular_velocities, cam_angular_accelerations], axis=1)
 
-        v_r_per_action = np.corrcoef(avg_vs, errors_p1)[0, 1]
-        omega_r_per_action = np.corrcoef(avg_omegas, errors_p1)[0, 1]
+        corr_matrix = np.corrcoef(corr_data)
+        cam_velocity_r = corr_matrix[0, 1]
+        cam_acceleration_r = corr_matrix[0, 2]
+        cam_angular_velocity_r = corr_matrix[0, 3]
+        cam_angular_acceleration_r = corr_matrix[0, 4]
 
         print('Protocol #1   (MPJPE) action-wise average:', round(np.mean(errors_p1), 1), 'mm')
         print('Protocol #2 (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
         print('Protocol #3 (N-MPJPE) action-wise average:', round(np.mean(errors_p3), 1), 'mm')
         print('Velocity      (MPJVE) action-wise average:', round(np.mean(errors_vel), 2), 'mm')
-        print('PMCC of cam     velocity to P1 err (per_frame):', round(mean_v_per_frame_r, 2))
-        print('PMCC of cam angular vel. to P1 err (per_frame):', round(mean_omega_per_frame_r, 2))
-        print('PMCC of cam     velocity to P1 err (per_action):', round(v_r_per_action, 2))
-        print('PMCC of cam angular vel. to P1 err (per_action):', round(omega_r_per_action, 2))
+        print('PMCC             (MPJPE and cam velocity):', cam_velocity_r)
+        print('PMCC         (MPJPE and cam acceleration):', cam_acceleration_r)
+        print('PMCC     (MPJPE and cam angular velocity):', cam_angular_velocity_r)
+        print('PMCC (MPJPE and cam angular acceleration):', cam_angular_acceleration_r)
 
     if not args.by_subject:
         run_evaluation(all_actions, action_filter)

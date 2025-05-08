@@ -32,17 +32,13 @@ def parse_args():
     parser.add_argument('--export-training-curves', action='store_true', help='save training curves as .png images')
 
     # Model selection
-    parser.add_argument('--use-model', dest='model_name', default='FCN', type=str, help='FCN, LSTM-Uncoupled, LSTM-Coupled')
+    parser.add_argument('--use-model', dest='model_name', default='FCN', type=str, help='FCN, LSTM-Uncoupled, Transformer, LSTM-Coupled')
 
     # Learning arguments
     parser.add_argument('-e', '--epochs', default=60, type=int, metavar='N', help='number of training epochs')
     parser.add_argument('-b', '--batch-size', default=1024, type=int, metavar='N', help='batch size in terms of predicted frames')
     parser.add_argument('-lr', '--learning-rate', default=0.001, type=float, metavar='LR', help='initial learning rate')
     parser.add_argument('-lrd', '--lr-decay', default=0.95, type=float, metavar='LR', help='learning rate decay per epoch')
-    parser.add_argument('-no-da', '--no-data-augmentation', dest='data_augmentation', action='store_false',
-                        help='disable train-time flipping')
-    parser.add_argument('-no-tta', '--no-test-time-augmentation', dest='test_time_augmentation', action='store_false',
-                        help='disable test-time flipping')
     
     # LSTM arguments
     parser.add_argument('--hidden-features', dest='lstm_hidden_features', default=128, type=int, metavar='N', help='number of hidden features for LSTM')
@@ -50,6 +46,15 @@ def parse_args():
     parser.add_argument('--lstm-head-architecture', dest='lstm_head_architecture', default='100', type=str, metavar='X,Y,Z', 
                         help='layer sizes for LSTM head separated by comma')
     parser.add_argument('--lstm-dropout', dest='lstm_dropout', default=0.25, type=float, metavar='P', help='LSTM dropout probability')
+
+    # Transformer arguments
+    parser.add_argument('--d-model', dest='d_model', default=256, type=int, metavar='N', help='transformer embedding dimension')
+    parser.add_argument('--num-layers', dest='num_layers', default=4, type=int, metavar='N', help='number of transformer encoder layers')
+    parser.add_argument('--nhead', dest='nhead', default=8, type=int, metavar='N', help='number of attention heads')
+    parser.add_argument('--dim-feedforward', dest='dim_feedforward', default=1024, type=int, metavar='N', help='feedforward network dimension in transformer layers')
+    parser.add_argument('--transformer-head-architecture', dest='transformer_head_architecture', default='256,128', type=str, metavar='X,Y,Z', 
+                        help='layer sizes for transformer head separated by comma')
+    parser.add_argument('--transformer-dropout', dest='transformer_dropout', default=0.25, type=float, metavar='P', help='transformer dropout probability')
 
     # Temporal FCN arguments
     parser.add_argument('-s', '--stride', default=1, type=int, metavar='N', help='chunk size to use during training')
@@ -65,10 +70,6 @@ def parse_args():
     parser.add_argument('--no-eval', action='store_true', help='disable epoch evaluation while training (small speed-up)')
     parser.add_argument('--dense', action='store_true', help='use dense convolutions instead of dilated convolutions')
     parser.add_argument('--disable-optimizations', action='store_true', help='disable optimized model for single-frame predictions')
-    parser.add_argument('--linear-projection', action='store_true', help='use only linear coefficients for semi-supervised projection')
-    parser.add_argument('--no-bone-length', action='store_false', dest='bone_length_term',
-                        help='disable bone length term in semi-supervised settings')
-    parser.add_argument('--no-proj', action='store_true', help='disable projection for semi-supervised setting')
     
     # Visualization
     parser.add_argument('--viz-subject', type=str, metavar='STR', help='subject to render')
@@ -83,10 +84,6 @@ def parse_args():
     parser.add_argument('--viz-limit', type=int, default=-1, metavar='N', help='only render first N frames')
     parser.add_argument('--viz-downsample', type=int, default=1, metavar='N', help='downsample FPS by a factor N')
     parser.add_argument('--viz-size', type=int, default=5, metavar='N', help='image size')
-    
-    parser.set_defaults(bone_length_term=True)
-    parser.set_defaults(data_augmentation=True)
-    parser.set_defaults(test_time_augmentation=True)
     
     args = parser.parse_args()
     # Check invalid configuration
