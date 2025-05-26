@@ -42,7 +42,7 @@ if __name__ == '__main__':
         positions_3d = {}
         cam_seqs = {}
 
-        for subject in tqdm(subjects[:5]):
+        for subject in tqdm(subjects):
             positions_3d[subject] = {}
             cam_seqs[subject] = {}
             # if benchmark flag set, only convert .pkl files containing _benchmark

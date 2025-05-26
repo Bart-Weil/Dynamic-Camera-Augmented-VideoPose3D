@@ -468,7 +468,7 @@ if not args.evaluate:
                 epoch_loss_traj_train_eval = 0
                 epoch_loss_2d_train_labeled_eval = 0
                 N = 0
-                for batch_cam, batch, batch_2d in train_generator_eval.next_epoch():
+                for batch_cam, batch, batch_2d, _ in train_generator_eval.next_epoch():
                     if batch_2d.shape[1] == 0:
                         # This can only happen when downsampling the dataset
                         continue
