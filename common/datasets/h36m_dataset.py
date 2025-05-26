@@ -8,7 +8,7 @@
 import numpy as np
 import copy
 from common.skeleton import Skeleton
-from common.mocap_dataset import MocapDataset
+from common.datasets.mocap_dataset import MocapDataset
 from common.camera import normalize_screen_coordinates, image_coordinates
        
 h36m_skeleton = Skeleton(parents=[-1,  0,  1,  2,  3,  4,  0,  6,  7,  8,  9,  0, 11, 12, 13, 14, 12,
@@ -208,7 +208,7 @@ h36m_cameras_extrinsic_params = {
 
 class Human36mDataset(MocapDataset):
     def __init__(self, path, remove_static_joints=True):
-        super().__init__(fps=50, skeleton=h36m_skeleton)
+        super().__init__(fps=50, skeleton_2d=h36m_skeleton, skeleton_3d=h36m_skeleton)
         
         self._cameras = copy.deepcopy(h36m_cameras_extrinsic_params)
         for cameras in self._cameras.values():

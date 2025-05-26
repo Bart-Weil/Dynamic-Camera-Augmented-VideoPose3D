@@ -17,7 +17,7 @@ from shutil import rmtree
 
 import sys
 sys.path.append('../')
-from common.CMUMocapDataset import CMUMocapDataset
+from common.datasets.CMUMocapDataset import CMUMocapDataset
 from common.camera import world_to_camera, image_coordinates, normalize_screen_coordinates, project_to_2d, project_to_2d_linear
 from common.utils import wrap
 
@@ -108,8 +108,8 @@ if __name__ == '__main__':
 
     print('Saving...')
     metadata = {
-        'num_joints': dataset.skeleton().num_joints(),
-        'keypoints_symmetry': [dataset.skeleton().joints_left(), dataset.skeleton().joints_right()],
+        'num_joints': dataset.skeleton_2d().num_joints(),
+        'keypoints_symmetry': [dataset.skeleton_2d().joints_left(), dataset.skeleton_2d().joints_right()],
         'layout_name': 'h36m'
     }
     np.savez_compressed(output_filename_2d, positions_2d=output_2d_poses, metadata=metadata)

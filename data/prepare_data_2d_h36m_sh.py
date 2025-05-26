@@ -16,7 +16,7 @@ from shutil import rmtree
 
 import sys
 sys.path.append('../')
-from common.h36m_dataset import Human36mDataset
+from common.datasets.h36m_dataset import Human36mDataset
 from common.camera import world_to_camera, project_to_2d, image_coordinates
 from common.utils import wrap
 

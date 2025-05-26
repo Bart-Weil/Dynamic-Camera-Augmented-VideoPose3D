@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 from common.skeleton import Skeleton
-from common.mocap_dataset import MocapDataset
+from common.datasets.mocap_dataset import MocapDataset
 from common.camera import normalize_screen_coordinates, image_coordinates
 
 
@@ -21,7 +21,7 @@ class CMUMocapDataset(MocapDataset):
             extrinsics_path (str): Path to the npz file containing the 'cam_extrinsics' dict.
             remove_static_joints (bool): (Unused here) whether to remove static joints.
         """
-        super().__init__(fps=240, skeleton=h36m_skeleton_nonstatic)
+        super().__init__(fps=240, skeleton_2d=h36m_skeleton_nonstatic, skeleton_3d=h36m_skeleton_nonstatic)
         data = np.load(path, allow_pickle=True)
 
         pose_data = data['positions_3d'].item()

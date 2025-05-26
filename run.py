@@ -39,22 +39,22 @@ except OSError as e:
 
 print('Loading dataset...')
 dataset_path = 'data/data_3d_' + args.dataset + '.npz'
-if args.dataset == 'h36m':
-    from common.h36m_dataset import Human36mDataset
-    dataset = Human36mDataset(dataset_path)
-elif args.dataset.startswith('humaneva'):
-    from common.humaneva_dataset import HumanEvaDataset
-    dataset = HumanEvaDataset(dataset_path)
-elif args.dataset.startswith('CMU'):
-    from common.CMUMocapDataset import CMUMocapDataset
-    dataset = CMUMocapDataset(dataset_path)
-elif args.dataset.startswith('custom'):
-    from common.custom_dataset import CustomDataset
-    dataset = CustomDataset('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
-else:
-    raise KeyError('Invalid dataset')
+match args.dataset:
+    case 'h36m':
+        from common.datasets.h36m_dataset import Human36mDataset
+        dataset = Human36mDataset(dataset_path)
+    case _ if args.dataset.startswith('humaneva'):
+        from common.datasets.humaneva_dataset import HumanEvaDataset
+        dataset = HumanEvaDataset(dataset_path)
+    case _ if args.dataset.startswith('CMU'):
+        from common.datasets.CMUMocapDataset import CMUMocapDataset
+        dataset = CMUMocapDataset(dataset_path)
+    case _ if args.dataset.startswith('custom'):
+        from common.custom_dataset import CustomDataset
+        dataset = CustomDataset('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
+    case _:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
 
-import numpy as np
 
 print('Preparing data...')
 for subject in dataset.subjects():
@@ -79,7 +79,7 @@ keypoints = np.load('data/data_2d_' + args.dataset + '_' + args.keypoints + '.np
 keypoints_metadata = keypoints['metadata'].item()
 keypoints_symmetry = keypoints_metadata['keypoints_symmetry']
 kps_left, kps_right = list(keypoints_symmetry[0]), list(keypoints_symmetry[1])
-joints_left, joints_right = list(dataset.skeleton().joints_left()), list(dataset.skeleton().joints_right())
+joints_left, joints_right = list(dataset.skeleton_2d().joints_left()), list(dataset.skeleton_2d().joints_right())
 keypoints = keypoints['positions_2d'].item()
 
 for subject in dataset.subjects():
@@ -196,15 +196,15 @@ match args.model_name:
         
         if not args.disable_optimizations and not args.dense and args.stride == 1:
             # Use optimized model for single-frame predictions
-            model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+            model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_2d().num_joints(),
                                         filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
         else:
             # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
-            model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+            model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_2d().num_joints(),
                                         filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                         dense=args.dense)
             
-        model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton().num_joints(),
+        model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_2d().num_joints(),
                                     filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                     dense=args.dense)
 
@@ -295,7 +295,7 @@ match args.model_name:
         
         model_pos_train = UncoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
                                 in_features = poses_valid_2d[0].shape[-1],
-                                num_joints_out = dataset.skeleton().num_joints(),
+                                num_joints_out = poses_valid[0].shape[-2],
                                 out_features = poses_valid[0].shape[-1],
                                 hidden_size = args.lstm_hidden_features,
                                 num_cells = args.lstm_cells, 
@@ -717,8 +717,8 @@ if args.render:
         
         from common.visualization import render_animation
         render_animation(input_keypoints, keypoints_metadata, anim_output,
-                         dataset.skeleton(), dataset.fps(), args.viz_bitrate, cam_intrinsics['azimuth'], args.viz_output,
-                         limit=args.viz_limit, downsample=args.viz_downsample, size=args.viz_size,
+                         dataset.skeleton_2d(), dataset.skeleton_3d(), dataset.fps(), args.viz_bitrate, cam_intrinsics['azimuth'],
+                         args.viz_output, limit=args.viz_limit, downsample=args.viz_downsample, size=args.viz_size,
                          input_video_path=args.viz_video, viewport=(cam_intrinsics['res_w'], cam_intrinsics['res_h']),
                          input_video_skip=args.viz_skip)
     

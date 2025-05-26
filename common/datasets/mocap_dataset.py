@@ -9,8 +9,9 @@ import numpy as np
 from common.skeleton import Skeleton
 
 class MocapDataset:
-    def __init__(self, fps, skeleton):
-        self._skeleton = skeleton
+    def __init__(self, fps, skeleton_2d, skeleton_3d):
+        self._skeleton_2d = skeleton_2d
+        self._skeleton_3d = skeleton_3d
         self._fps = fps
         self._data = None # Must be filled by subclass
         self._cameras = None # Must be filled by subclass
@@ -33,8 +34,11 @@ class MocapDataset:
     def fps(self):
         return self._fps
     
-    def skeleton(self):
-        return self._skeleton
+    def skeleton_2d(self):
+        return self._skeleton_2d
+    
+    def skeleton_3d(self):
+        return self._skeleton_3d
         
     def cameras(self):
         return self._cameras

@@ -8,7 +8,7 @@
 import numpy as np
 import copy
 from common.skeleton import Skeleton
-from common.mocap_dataset import MocapDataset
+from common.datasets.mocap_dataset import MocapDataset
 from common.camera import normalize_screen_coordinates, image_coordinates
        
 humaneva_skeleton = Skeleton(parents=[-1, 0, 1, 2, 3, 1, 5, 6, 0, 8, 9, 0, 11, 12, 1],
@@ -89,7 +89,7 @@ humaneva_cameras_extrinsic_params = {
 
 class HumanEvaDataset(MocapDataset):
     def __init__(self, path):
-        super().__init__(fps=60, skeleton=humaneva_skeleton)
+        super().__init__(fps=60, skeleton_2d=humaneva_skeleton, skeleton_3d=humaneva_skeleton)
         
         self._cameras = copy.deepcopy(humaneva_cameras_extrinsic_params)
         for cameras in self._cameras.values():
