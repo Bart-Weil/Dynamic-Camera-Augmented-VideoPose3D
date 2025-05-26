@@ -27,6 +27,12 @@ from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
 from common.utils import deterministic_random
 
+from common.datasets.h36m_dataset import Human36mDataset
+from common.datasets.humaneva_dataset import HumanEvaDataset
+from common.datasets.CMUMocapDataset import CMUMocapDataset
+from common.datasets.ThreeDPWDataset import ThreeDPWDataset
+from common.custom_dataset import CustomDataset
+
 args = parse_args()
 print(args)
 
@@ -41,16 +47,14 @@ print('Loading dataset...')
 dataset_path = 'data/data_3d_' + args.dataset + '.npz'
 match args.dataset:
     case 'h36m':
-        from common.datasets.h36m_dataset import Human36mDataset
         dataset = Human36mDataset(dataset_path)
-    case _ if args.dataset.startswith('humaneva'):
-        from common.datasets.humaneva_dataset import HumanEvaDataset
+    case 'humaneva':
         dataset = HumanEvaDataset(dataset_path)
-    case _ if args.dataset.startswith('CMU'):
-        from common.datasets.CMUMocapDataset import CMUMocapDataset
+    case 'CMU':
         dataset = CMUMocapDataset(dataset_path)
-    case _ if args.dataset.startswith('custom'):
-        from common.custom_dataset import CustomDataset
+    case '3dpw':
+        dataset = ThreeDPWDataset(dataset_path)
+    case 'custom':
         dataset = CustomDataset('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
     case _:
         raise ValueError(f"Unknown dataset: {args.dataset}")
@@ -62,7 +66,7 @@ for subject in dataset.subjects():
         anim = dataset[subject][action]
         
         if 'positions' in anim:
-            if isinstance(dataset, CMUMocapDataset):
+            if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
                 pos_3d = anim['positions']
                 pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
@@ -89,7 +93,7 @@ for subject in dataset.subjects():
         if 'positions_3d' not in dataset[subject][action]:
             continue
             
-        if not isinstance(dataset, CMUMocapDataset):
+        if not isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
             for cam_idx in range(len(keypoints[subject][action])):
                 
                 # We check for >= instead of == because some videos in H3.6M contain extra frames
@@ -108,6 +112,11 @@ for subject in keypoints.keys():
             kps = keypoints[subject][action]
             intrinsics = dataset.cameras()[subject][action]['intrinsics']
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics['res_w'], h=intrinsics['res_h'])
+            keypoints[subject][action] = [kps]
+        elif isinstance(dataset, ThreeDPWDataset):
+            kps = keypoints[subject][action]
+            intrinsics = dataset.cameras()[subject][action]['intrinsics']
+            kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics[0, 2]*2, h=intrinsics[1, 2]*2)
             keypoints[subject][action] = [kps]
         else:
             for cam_idx, kps in enumerate(keypoints[subject][action]):
@@ -143,7 +152,7 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
                 out_poses_2d.append(poses_2d[i])
                 
             if subject in dataset.cameras():
-                if isinstance(dataset, CMUMocapDataset):
+                if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
                     out_camera_params.append(dataset.cameras()[subject][action])
                 else:
                     cams = dataset.cameras()[subject]
