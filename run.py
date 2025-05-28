@@ -108,15 +108,10 @@ for subject in dataset.subjects():
         
 for subject in keypoints.keys():
     for action in keypoints[subject]:
-        if isinstance(dataset, CMUMocapDataset):
+        if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
             kps = keypoints[subject][action]
             intrinsics = dataset.cameras()[subject][action]['intrinsics']
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics['res_w'], h=intrinsics['res_h'])
-            keypoints[subject][action] = [kps]
-        elif isinstance(dataset, ThreeDPWDataset):
-            kps = keypoints[subject][action]
-            intrinsics = dataset.cameras()[subject][action]['intrinsics']
-            kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics[0, 2]*2, h=intrinsics[1, 2]*2)
             keypoints[subject][action] = [kps]
         else:
             for cam_idx, kps in enumerate(keypoints[subject][action]):
@@ -205,15 +200,15 @@ match args.model_name:
         
         if not args.disable_optimizations and not args.dense and args.stride == 1:
             # Use optimized model for single-frame predictions
-            model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_2d().num_joints(),
+            model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                         filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
         else:
             # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
-            model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_2d().num_joints(),
+            model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                         filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                         dense=args.dense)
             
-        model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_2d().num_joints(),
+        model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                     filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                     dense=args.dense)
 
@@ -361,6 +356,7 @@ print('INFO: Testing on {} frames'.format(test_generator.num_frames()))
 
 if not args.evaluate:
     print("Training Subjects: ", ", ".join(subjects_train))
+    print("Test Subjects: ", ", ".join(subjects_test))
     cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
 
     lr = args.learning_rate
@@ -806,6 +802,8 @@ else:
             
             e1_actions += e1_per_action
             cam_info_actions += cam_info_per_action
+
+        print(cam_info_actions)
 
         cam_velocities = np.linalg.norm(np.array([cam_info['cam_velocity']
             for cam_info in cam_info_actions]), axis=1)

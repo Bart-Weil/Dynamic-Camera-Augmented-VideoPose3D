@@ -58,8 +58,8 @@ class ThreeDPWDataset(MocapDataset):
                 cam_rotations = []
 
                 for cam_ext in cam_seq:
-                    R = cam_ext[:3, :3].T
-                    t = -R @ cam_ext[:3, 3]
+                    R = cam_ext[:, :3].T
+                    t = -R @ cam_ext[:, 3]
 
                     cam_translations.append(t)
                     cam_rotations.append(R)
@@ -72,7 +72,7 @@ class ThreeDPWDataset(MocapDataset):
                     R_i = cam_rotations[i]
                     R_next = cam_rotations[i+1]
                     delta_R = R_i.T @ R_next
-                    log_delta_R = logm(delta_R)
+                    log_delta_R = logm(delta_R, disp=False)[0] # Discard Error Term
                     omega_hat = log_delta_R * self.fps()
                     omega = skew_to_vec(omega_hat)
                     angular_velocities.append(omega)
@@ -84,7 +84,18 @@ class ThreeDPWDataset(MocapDataset):
                 avg_cam_angular_velocity = np.mean(angular_velocities, axis=0)
                 avg_cam_angular_acceleration = np.mean(angular_accelerations, axis=0)
 
-                cameras_for_action = {'intrinsics': intrinsic_mat,
+                cam_intrinsic_dict = {
+                    'id': '1',
+                    'center': intrinsic_mat[:2, 2].astype('float32'),
+                    'focal_length': np.array([intrinsic_mat[0, 0], intrinsic_mat[1, 1]], dtype='float32'),
+                    'radial_distortion': np.array([0, 0, 0], dtype='float32'),
+                    'tangential_distortion': np.array([0, 0], dtype='float32'),
+                    'res_w': 2*intrinsic_mat[0, 2],
+                    'res_h': 2*intrinsic_mat[1, 2],
+                    'azimuth': 0,  # Only used for visualization
+                }
+
+                cameras_for_action = {'intrinsics': cam_intrinsic_dict,
                                       'extrinsics': cam_seq,
                                       'cam_velocity': avg_cam_velocity,
                                       'cam_acceleration': avg_cam_acceleration,

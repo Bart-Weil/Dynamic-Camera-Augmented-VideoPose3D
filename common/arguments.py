@@ -49,10 +49,10 @@ def parse_args():
 
     # Transformer arguments
     parser.add_argument('--d-model', dest='d_model', default=256, type=int, metavar='N', help='transformer embedding dimension')
-    parser.add_argument('--num-layers', dest='num_layers', default=4, type=int, metavar='N', help='number of transformer encoder layers')
+    parser.add_argument('--num-layers', dest='num_layers', default=2, type=int, metavar='N', help='number of transformer encoder layers')
     parser.add_argument('--nhead', dest='nhead', default=8, type=int, metavar='N', help='number of attention heads')
     parser.add_argument('--dim-feedforward', dest='dim_feedforward', default=1024, type=int, metavar='N', help='feedforward network dimension in transformer layers')
-    parser.add_argument('--transformer-head-architecture', dest='transformer_head_architecture', default='256,128', type=str, metavar='X,Y,Z', 
+    parser.add_argument('--transformer-head-architecture', dest='transformer_head_architecture', default='256,240,224,192,128', type=str, metavar='X,Y,Z', 
                         help='layer sizes for transformer head separated by comma')
     parser.add_argument('--transformer-dropout', dest='transformer_dropout', default=0.25, type=float, metavar='P', help='transformer dropout probability')
 

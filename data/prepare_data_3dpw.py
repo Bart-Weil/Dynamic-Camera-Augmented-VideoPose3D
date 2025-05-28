@@ -18,8 +18,6 @@ from shutil import rmtree
 import sys
 sys.path.append('../')
 from common.datasets.ThreeDPWDataset import ThreeDPWDataset
-from common.camera import world_to_camera, image_coordinates, normalize_screen_coordinates, project_to_2d, project_to_2d_linear
-from common.utils import wrap
 
 output_filename = 'data_3d_3dpw'
 output_filename_2d = 'data_2d_3dpw_detections'
@@ -56,19 +54,19 @@ if __name__ == '__main__':
                 scene_file = open(f, "rb")
                 scene_data = pickle.load(scene_file, encoding='latin')
 
-                joint_positions_subjects = np.array(scene_data['jointPositions'])
-                joint_detections_subjects = np.array(scene_data['poses2d'])
+                joint_positions_subjects = np.array(scene_data['jointPositions'], dtype='float32')
+                joint_detections_subjects = np.array(scene_data['poses2d'], dtype='float32')
                 
                 num_subjects = joint_positions_subjects.shape[0]
                 
-                cam_seq = scene_data['cam_poses']
-                intrinsic_mat = scene_data['cam_intrinsics']
+                cam_seq = np.array(scene_data['cam_poses'], dtype='float32')[:, :3, :]
+                intrinsic_mat = np.array(scene_data['cam_intrinsics'], dtype='float32')
                 for i in range(num_subjects):
                     joint_positions = joint_positions_subjects[i]
                     joint_detections = joint_detections_subjects[i][:, :2, :] # filter confidence scores
 
-                    joint_positions = joint_positions.reshape(-1, 24, 3).astype('float32')
-                    joint_detections = joint_detections.reshape(-1, 18, 2).astype('float32')
+                    joint_positions = joint_positions.reshape(-1, 24, 3)
+                    joint_detections = joint_detections.reshape(-1, 18, 2)
 
                     print(joint_positions.shape)
 
