@@ -7,7 +7,6 @@
 
 import numpy as np
 
-import pickle
 from common.arguments import parse_args
 import torch
 
@@ -15,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import os
+import json
 import sys
 import errno
 
@@ -121,6 +121,7 @@ for subject in keypoints.keys():
                 keypoints[subject][action][cam_idx] = kps
 
 subjects_train = args.subjects_train.split(',')
+subjects_validation = args.subjects_validation.split(',')
 subjects_semi = [] if not args.subjects_unlabeled else args.subjects_unlabeled.split(',')
 if not args.render:
     subjects_test = args.subjects_test.split(',')
@@ -181,7 +182,6 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
             out_poses_2d[i] = out_poses_2d[i][::stride]
             if out_poses_3d is not None:
                 out_poses_3d[i] = out_poses_3d[i][::stride]
-    
 
     return out_camera_params, out_poses_3d, out_poses_2d
 
@@ -189,7 +189,8 @@ action_filter = None if args.actions == '*' else args.actions.split(',')
 if action_filter is not None:
     print('Selected actions:', action_filter)
     
-cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_test, action_filter)
+cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_validation, action_filter)
+cameras_test, poses_test, poses_test_2d = fetch(subjects_test, action_filter)
 
 print("Subjects: ", dataset.subjects())
 print("Evaluation Subjects: ", ", ".join(subjects_test))
@@ -200,15 +201,15 @@ match args.model_name:
         
         if not args.disable_optimizations and not args.dense and args.stride == 1:
             # Use optimized model for single-frame predictions
-            model_pos_train = TemporalModelOptimized1f(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
+            model_pos_train = TemporalModelOptimized1f(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                         filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
         else:
             # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
-            model_pos_train = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
+            model_pos_train = TemporalModel(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                         filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                         dense=args.dense)
             
-        model_pos = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
+        model_pos = TemporalModel(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                     filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
                                     dense=args.dense)
 
@@ -231,19 +232,19 @@ match args.model_name:
             causal_shift = 0
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
         
-        model_pos_train = CoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
-                                in_features = poses_valid_2d[0].shape[-1],
-                                num_joints_out = poses_valid[0].shape[-2],
-                                out_features = poses_valid[0].shape[-1],
+        model_pos_train = CoupledLSTM(num_joints_in = poses_test_2d[0].shape[-2],
+                                in_features = poses_test_2d[0].shape[-1],
+                                num_joints_out = poses_test[0].shape[-2],
+                                out_features = poses_test[0].shape[-1],
                                 hidden_size = args.lstm_hidden_features,
                                 num_cells = args.lstm_cells, 
                                 head_layers = lstm_head_layers,
                                 dropout = args.lstm_dropout)
         
-        model_pos = CoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
-                                in_features = poses_valid_2d[0].shape[-1],
-                                num_joints_out = poses_valid[0].shape[-2],
-                                out_features = poses_valid[0].shape[-1],
+        model_pos = CoupledLSTM(num_joints_in = poses_test_2d[0].shape[-2],
+                                in_features = poses_test_2d[0].shape[-1],
+                                num_joints_out = poses_test[0].shape[-2],
+                                out_features = poses_test[0].shape[-1],
                                 hidden_size = args.lstm_hidden_features,
                                 num_cells = args.lstm_cells, 
                                 head_layers = lstm_head_layers,
@@ -262,26 +263,26 @@ match args.model_name:
         transformer_head_layers = [int(x) for x in args.transformer_head_architecture.split(',')]
 
         model_pos_train = CoupledTransformer(
-            num_joints_in = poses_valid_2d[0].shape[-2],
-            in_features = poses_valid_2d[0].shape[-1],
-            num_joints_out = poses_valid[0].shape[-2],
-            out_features = poses_valid[0].shape[-1],
+            num_joints_in = poses_test_2d[0].shape[-2],
+            in_features = poses_test_2d[0].shape[-1],
+            num_joints_out = poses_test[0].shape[-2],
+            out_features = poses_test[0].shape[-1],
             d_model = args.d_model,
             num_layers = args.num_layers,
-            nhead = args.nhead,
+            n_heads = args.n_heads,
             dim_feedforward = args.dim_feedforward,
             head_layers = transformer_head_layers,
             dropout = args.transformer_dropout
         )
 
         model_pos = CoupledTransformer(
-            num_joints_in = poses_valid_2d[0].shape[-2],
-            in_features = poses_valid_2d[0].shape[-1],
-            num_joints_out = poses_valid[0].shape[-2],
-            out_features = poses_valid[0].shape[-1],
+            num_joints_in = poses_test_2d[0].shape[-2],
+            in_features = poses_test_2d[0].shape[-1],
+            num_joints_out = poses_test[0].shape[-2],
+            out_features = poses_test[0].shape[-1],
             d_model = args.d_model,
             num_layers = args.num_layers,
-            nhead = args.nhead,
+            n_heads = args.n_heads,
             dim_feedforward = args.dim_feedforward,
             head_layers = transformer_head_layers,
             dropout = args.transformer_dropout
@@ -297,19 +298,19 @@ match args.model_name:
 
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
         
-        model_pos_train = UncoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
-                                in_features = poses_valid_2d[0].shape[-1],
-                                num_joints_out = poses_valid[0].shape[-2],
-                                out_features = poses_valid[0].shape[-1],
+        model_pos_train = UncoupledLSTM(num_joints_in = poses_test_2d[0].shape[-2],
+                                in_features = poses_test_2d[0].shape[-1],
+                                num_joints_out = poses_test[0].shape[-2],
+                                out_features = poses_test[0].shape[-1],
                                 hidden_size = args.lstm_hidden_features,
                                 num_cells = args.lstm_cells, 
                                 head_layers = lstm_head_layers,
                                 dropout = args.lstm_dropout)
         
-        model_pos = UncoupledLSTM(num_joints_in = poses_valid_2d[0].shape[-2],
-                                in_features = poses_valid_2d[0].shape[-1],
-                                num_joints_out = poses_valid[0].shape[-2],
-                                out_features = poses_valid[0].shape[-1],
+        model_pos = UncoupledLSTM(num_joints_in = poses_test_2d[0].shape[-2],
+                                in_features = poses_test_2d[0].shape[-1],
+                                num_joints_out = poses_test[0].shape[-2],
+                                out_features = poses_test[0].shape[-1],
                                 hidden_size = args.lstm_hidden_features,
                                 num_cells = args.lstm_cells, 
                                 head_layers = lstm_head_layers,
@@ -336,35 +337,16 @@ if args.resume or args.evaluate:
     print('This model was trained for {} epochs'.format(checkpoint['epoch']))
     model_pos_train.load_state_dict(checkpoint['model_pos'])
     model_pos.load_state_dict(checkpoint['model_pos'])
-    
-    if args.evaluate and 'model_traj' in checkpoint and checkpoint['model_traj'] != None:
-        if args.model_name == "FCN":
-            # Load trajectory model if it contained in the checkpoint (e.g. for inference in the wild)
-            model_traj = TemporalModel(poses_valid_2d[0].shape[-2], poses_valid_2d[0].shape[-1], 1,
-                                filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
-                                dense=args.dense)
-            if torch.cuda.is_available():
-                model_traj = model_traj.cuda()
-            model_traj.load_state_dict(checkpoint['model_traj'])
-    else:
-        model_traj = None
 
-test_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
+test_generator = UnchunkedGenerator(cameras_test, poses_test, poses_test_2d,
                                     pad=pad, causal_shift=causal_shift,
                                     kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
 print('INFO: Testing on {} frames'.format(test_generator.num_frames()))
 
-if not args.evaluate:
-    print("Training Subjects: ", ", ".join(subjects_train))
-    print("Test Subjects: ", ", ".join(subjects_test))
-    cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
-
-    lr = args.learning_rate
-
-    optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
-        
-    lr_decay = args.lr_decay
-
+def train(n_epochs, train_generator, train_generator_eval, test_generator,
+          model_pos_train, model_pos, optimizer,
+          save_state=True, plot_losses=True, learning_rate=0.001, lr_decay=0.95):
+    
     losses_3d_train = []
     losses_3d_train_eval = []
     losses_3d_valid = []
@@ -372,15 +354,9 @@ if not args.evaluate:
     epoch = 0
     initial_momentum = 0.1
     final_momentum = 0.001
-    
-    train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train, poses_train,
-                                       poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True,
-                                       kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-    train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
-                                              pad=pad, causal_shift=causal_shift)
-    print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
 
     if args.resume:
+        assert not args.tune_hyperparameters, 'Cannot resume training with hyperparameter tuning'
         epoch = checkpoint['epoch']
         if 'optimizer' in checkpoint and checkpoint['optimizer'] is not None:
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -392,15 +368,12 @@ if not args.evaluate:
             
     print('** Note: reported losses are averaged over all frames and test-time augmentation is not used here.')
     print('** The final evaluation will be carried out after the last training epoch.')
-    
-    # Pos model only
-    while epoch < args.epochs:
+
+    best_validation_p1_error = float('inf')
+    while epoch < n_epochs:
         start_time = time()
         epoch_loss_3d_train = 0
-        epoch_loss_traj_train = 0
-        epoch_loss_2d_train_unlabeled = 0
         N = 0
-        N_semi = 0
         model_pos_train.train()
 
         for batch_cam, batch_3d, batch_2d in train_generator.next_epoch():
@@ -438,8 +411,6 @@ if not args.evaluate:
             model_pos.eval()
 
             epoch_loss_3d_valid = 0
-            epoch_loss_traj_valid = 0
-            epoch_loss_2d_valid = 0
             N = 0
             
             if not args.no_eval:
@@ -452,7 +423,6 @@ if not args.evaluate:
                         inputs_3d = inputs_3d.cuda()
                         inputs_2d = inputs_2d.cuda()
                         inputs_cam = inputs_cam.cuda()
-                    inputs_traj = inputs_3d[:, :, :1].clone()
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
@@ -467,11 +437,10 @@ if not args.evaluate:
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
                 losses_3d_valid.append(epoch_loss_3d_valid / N)
+                best_validation_p1_error = min(best_validation_p1_error, epoch_loss_3d_valid / N)
 
                 # Evaluate on training set, this time in evaluation mode
                 epoch_loss_3d_train_eval = 0
-                epoch_loss_traj_train_eval = 0
-                epoch_loss_2d_train_labeled_eval = 0
                 N = 0
                 for batch_cam, batch, batch_2d, _ in train_generator_eval.next_epoch():
                     if batch_2d.shape[1] == 0:
@@ -486,7 +455,6 @@ if not args.evaluate:
                         inputs_3d = inputs_3d.cuda()
                         inputs_2d = inputs_2d.cuda()
                         inputs_cam = inputs_cam.cuda()
-                    inputs_traj = inputs_3d[:, :, :1].clone()
                     inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
@@ -500,10 +468,6 @@ if not args.evaluate:
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
                 losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
-
-                # Evaluate 2D loss on unlabeled training set (in evaluation mode)
-                epoch_loss_2d_train_unlabeled_eval = 0
-                N_semi = 0
 
         elapsed = (time() - start_time)/60
         
@@ -520,7 +484,7 @@ if not args.evaluate:
                     lr,
                     losses_3d_train[-1] * 1000,
                     losses_3d_train_eval[-1] * 1000,
-                    losses_3d_valid[-1]  *1000))
+                    losses_3d_valid[-1] * 1000))
         
         # Decay learning rate exponentially
         lr *= lr_decay
@@ -534,7 +498,7 @@ if not args.evaluate:
             model_pos_train.set_bn_momentum(momentum)
             
         # Save checkpoint if necessary
-        if epoch % args.checkpoint_frequency == 0:
+        if save_state and epoch % args.checkpoint_frequency == 0:
             chk_path = os.path.join(args.checkpoint, 'epoch_{}.bin'.format(epoch))
             print('Saving checkpoint to', chk_path)
             
@@ -547,7 +511,7 @@ if not args.evaluate:
             }, chk_path)
             
         # Save training curves after every epoch, as .png images (if requested)
-        if args.export_training_curves and epoch > 3:
+        if plot_losses and args.export_training_curves and epoch > 3:
             if 'matplotlib' not in sys.modules:
                 import matplotlib
                 matplotlib.use('Agg')
@@ -565,6 +529,117 @@ if not args.evaluate:
             plt.savefig(os.path.join(args.checkpoint, 'loss_3d.png'))
 
             plt.close('all')
+    
+    return best_validation_p1_error
+
+if args.tune_hyperparameters:
+    config_path = os.path.join(os.path.dirname(__file__), 'gridsearch.json')
+    with open(config_path, 'r') as f:
+        search_space = json.load(f)
+
+    if args.use_model not in search_space:
+        raise ValueError(f"Model '{args.use_model}' not found in gridsearch.json")
+    
+    lstm_hyperparams = {
+        'num_joints_in': poses_test_2d[0].shape[-2],
+        'in_features': poses_test_2d[0].shape[-1],
+        'num_joints_out': poses_test[0].shape[-2],
+        'out_features': poses_test[0].shape[-1],
+        'hidden_size': args.lstm_hidden_features,
+        'num_cells': args.lstm_cells, 
+        'head_layers': lstm_head_layers,
+        'dropout': args.lstm_dropout
+    }
+
+    transformer_hyperparams = {
+        'num_joints_in': poses_test_2d[0].shape[-2],
+        'in_features': poses_test_2d[0].shape[-1],
+        'num_joints_out': poses_test[0].shape[-2],
+        'out_features': poses_test[0].shape[-1],
+        'd_model': args.d_model,
+        'num_layers': args.num_layers,
+        'n_heads': args.n_heads,
+        'dim_feedforward': args.dim_feedforward,
+        'head_layers': transformer_head_layers,
+        'dropout': args.transformer_dropout
+    }
+
+    cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
+    
+    train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
+            pad=pad, causal_shift=causal_shift)
+    validation_generator = UnchunkedGenerator(cameras_test, poses_test, poses_test_2d,
+            pad=pad, causal_shift=causal_shift,
+            kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
+    print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
+    print('INFO: Validation on {} frames'.format(validation_generator.num_frames()))
+    
+    print(f"Running grid search for model: {args.use_model}")
+    best_validation_p1_error = float('inf')
+    best_params = None
+    
+    for idx, params in enumerate(search_space[args.use_model]):
+        print(f"  Trial {idx + 1}: {params}")
+        hyperparams = {param: value for param, value in params.items() if param not in [
+            'learning_rate', 'learning_rate_decay', 'batch_size']}
+        
+        lr = params['learning_rate'] if 'learning_rate' in params else args.learning_rate
+        lr_decay = params['learning_rate_decay'] if 'learning_rate_decay' in params else args.lr_decay
+        batch_size = params['batch_size'] if 'batch_size' in params else args.batch_size
+
+        train_generator = ChunkedGenerator(batch_size//args.stride, cameras_train, poses_train,
+            poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True,
+            kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
+
+        match args.use_model:
+            case 'LSTM_Coupled':
+
+                lstm_hyperparams.update(hyperparams)
+
+                model_pos_train = UncoupledLSTM(**lstm_hyperparams)
+                model_pos = UncoupledLSTM(**lstm_hyperparams)
+                
+            case 'Transformer':
+
+                transformer_hyperparams.update(hyperparams)
+                model_pos_train = CoupledTransformer(**transformer_hyperparams)
+                model_pos = CoupledTransformer(**transformer_hyperparams)
+        
+        
+        optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
+            
+        best_validation_p1_error = train(args.tuning_epochs, train_generator,
+            validation_generator, model_pos_train,
+            model_pos, optimizer,
+            save_state=False, plot_losses=False, learning_rate=lr, lr_decay=lr_decay)
+        
+        if best_validation_p1_error < best_validation_p1_error:
+            best_validation_p1_error = best_validation_p1_error
+            best_params = params
+
+    print('Best validation P1 error:', best_validation_p1_error)
+    print('Best hyperparameters:', best_params)
+        
+elif not args.evaluate:
+    print("Training Subjects: ", ", ".join(subjects_train))
+    print("Test Subjects: ", ", ".join(subjects_test))
+    cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
+
+    lr = args.learning_rate
+
+    optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
+        
+    lr_decay = args.lr_decay
+    
+    train_generator = ChunkedGenerator(args.batch_size//args.stride, cameras_train, poses_train,
+                                       poses_train_2d, args.stride, pad=pad, causal_shift=causal_shift, shuffle=True,
+                                       kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
+    train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
+                                              pad=pad, causal_shift=causal_shift)
+    print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
+    
+    train(args.epochs, optimizer, train_generator, test_generator, model_pos_train, model_pos, save_state=True, plot_losses=True)
+
 
 # Evaluate
 def evaluate(test_generator, action=None, return_predictions=False, use_trajectory_model=False):
@@ -577,10 +652,8 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     e1_per_seq = []
 
     with torch.no_grad():
-        if not use_trajectory_model:
-            model_pos.eval()
-        else:
-            model_traj.eval()
+        model_pos.eval()
+
         N = 0
 
         for cams, batch, batch_2d, seq_info in test_generator.next_epoch():
@@ -597,10 +670,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
             # Positional model
             if isinstance(model_pos, TemporalModelBase):
-                if not use_trajectory_model:
-                    predicted_3d_pos = model_pos(inputs_2d)
-                else:
-                    predicted_3d_pos = model_traj(inputs_2d)
+                predicted_3d_pos = model_pos(inputs_2d)
             else:
                 predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
                 
@@ -661,9 +731,6 @@ if args.render:
                              pad=pad, causal_shift=causal_shift,
                              kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
     prediction = evaluate(gen, return_predictions=True)
-    if model_traj is not None and ground_truth is None:
-        prediction_traj = evaluate(gen, return_predictions=True, use_trajectory_model=True)
-        prediction += prediction_traj
     
     if args.viz_export is not None:
         print('Exporting joint positions to', args.viz_export)
@@ -671,11 +738,6 @@ if args.render:
         np.save(args.viz_export, prediction)
     
     if args.viz_output is not None:
-        if ground_truth is not None:
-            # Reapply trajectory
-            trajectory = ground_truth[:, :1]
-            ground_truth[:, 1:] += trajectory
-            prediction += trajectory
         
         # Invert camera transformation
         cams = dataset.cameras()[args.viz_subject][args.viz_action]

@@ -50,7 +50,7 @@ class CamTransformerBase(nn.Module):
         out_features: int,
         d_model: int,
         num_layers: int,
-        nhead: int,
+        n_heads: int,
         dim_feedforward: int,
         head_layers: list[int],
         dropout: float = 0.25,
@@ -64,7 +64,7 @@ class CamTransformerBase(nn.Module):
 
         self.d_model = d_model
         self.num_layers = num_layers
-        self.nhead = nhead
+        self.n_heads = n_heads
         self.dim_feedforward = dim_feedforward
         self.head_layers = head_layers
         self.dropout = dropout
@@ -99,7 +99,7 @@ class CoupledTransformer(CamTransformerBase):
         out_features: Number of features per output joint (typically 3 for 3D poses).
         d_model: Dimensionality of transformer embeddings.
         num_layers: Number of transformer encoder layers.
-        nhead: Number of attention heads in each encoder layer.
+        n_heads: Number of attention heads in each encoder layer.
         dim_feedforward: Dimension of the feedforward network in each encoder layer.
         head_layers: List of hidden layer sizes for the output MLP head.
         dropout: Dropout probability for transformer and MLP layers.
@@ -112,7 +112,7 @@ class CoupledTransformer(CamTransformerBase):
         out_features: int,
         d_model: int,
         num_layers: int,
-        nhead: int,
+        n_heads: int,
         dim_feedforward: int,
         head_layers: list[int],
         dropout: float = 0.25,
@@ -124,7 +124,7 @@ class CoupledTransformer(CamTransformerBase):
             out_features,
             d_model,
             num_layers,
-            nhead,
+            n_heads,
             dim_feedforward,
             head_layers,
             dropout,
@@ -140,7 +140,7 @@ class CoupledTransformer(CamTransformerBase):
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
-            nhead=nhead,
+            n_heads=n_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,

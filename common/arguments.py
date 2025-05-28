@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument('-k', '--keypoints', default='cpn_ft_h36m_dbb', type=str, metavar='NAME', help='2D detections to use')
     parser.add_argument('-str', '--subjects-train', default='S1,S5,S6,S7,S8', type=str, metavar='LIST',
                         help='training subjects separated by comma')
-    parser.add_argument('-ste', '--subjects-test', default='01', type=str, metavar='LIST', help='test subjects separated by comma')
+    parser.add_argument('-ste', '--subjects-test', default='03', type=str, metavar='LIST', help='test subjects separated by comma')
     parser.add_argument('-sun', '--subjects-unlabeled', default='', type=str, metavar='LIST',
                         help='unlabeled subjects separated by comma for self-supervision')
     parser.add_argument('-a', '--actions', default='*', type=str, metavar='LIST',
@@ -42,7 +42,7 @@ def parse_args():
     
     # LSTM arguments
     parser.add_argument('--hidden-features', dest='lstm_hidden_features', default=128, type=int, metavar='N', help='number of hidden features for LSTM')
-    parser.add_argument('--lstm-cells', dest='lstm_cells', default=1, type=int, metavar='N', help='number of stacked LSTM cells')
+    parser.add_argument('--lstm-cells', dest='lstm_cells', default=2, type=int, metavar='N', help='number of stacked LSTM cells')
     parser.add_argument('--lstm-head-architecture', dest='lstm_head_architecture', default='100', type=str, metavar='X,Y,Z', 
                         help='layer sizes for LSTM head separated by comma')
     parser.add_argument('--lstm-dropout', dest='lstm_dropout', default=0.25, type=float, metavar='P', help='LSTM dropout probability')
@@ -50,7 +50,7 @@ def parse_args():
     # Transformer arguments
     parser.add_argument('--d-model', dest='d_model', default=256, type=int, metavar='N', help='transformer embedding dimension')
     parser.add_argument('--num-layers', dest='num_layers', default=2, type=int, metavar='N', help='number of transformer encoder layers')
-    parser.add_argument('--nhead', dest='nhead', default=8, type=int, metavar='N', help='number of attention heads')
+    parser.add_argument('--n_heads', dest='n_heads', default=8, type=int, metavar='N', help='number of attention heads')
     parser.add_argument('--dim-feedforward', dest='dim_feedforward', default=1024, type=int, metavar='N', help='feedforward network dimension in transformer layers')
     parser.add_argument('--transformer-head-architecture', dest='transformer_head_architecture', default='256,240,224,192,128', type=str, metavar='X,Y,Z', 
                         help='layer sizes for transformer head separated by comma')
@@ -64,6 +64,9 @@ def parse_args():
     parser.add_argument('--fcn-dropout', dest='fcn_dropout', default=0.25, type=float, metavar='P', help='temporal FCN dropout probability')
 
     # Experimental
+    parser.add_argument('--tune-hyperparameters', action='store_true', help='enable hyperparmeter tuning (search spaces per model defined at root/gridsearch.json)')
+    parser.add_argument('-te', '--tuning-epochs', default=20, type=int, metavar='N', help='number of epochs for hyperparameter tuning')
+    parser.add_argument('-stv', '--subjects-validation', default='02', type=str, metavar='LIST', help='validation subjects separated by comma')
     parser.add_argument('--subset', default=1, type=float, metavar='FRACTION', help='reduce dataset size by fraction')
     parser.add_argument('--downsample', default=1, type=int, metavar='FACTOR', help='downsample frame rate by factor (semi-supervised)')
     parser.add_argument('--warmup', default=1, type=int, metavar='N', help='warm-up epochs for semi-supervision')
