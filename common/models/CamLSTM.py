@@ -30,7 +30,7 @@ class CamLSTMBase(nn.Module):
 
         self.dropout = dropout
     
-    def sliding_window(self, inputs_2d, inputs_cam, window_size):
+    def sliding_window(self, inputs_2d: torch.Tensor, inputs_intrinsic: torch.Tensor, inputs_extrinsic: torch.Tensor, window_size: int):
         _, T, J, _ = inputs_2d.shape
         n_windows = T - window_size + 1
         if n_windows <= 0:
@@ -38,9 +38,10 @@ class CamLSTMBase(nn.Module):
 
         axis_permutation = (0, 3, 1, 2)
         win_2d = inputs_2d.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
-        win_cam = inputs_cam.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
+        win_intrinsics = inputs_intrinsic.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
+        win_extrinsics = inputs_extrinsic.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
 
-        out = self(win_2d, win_cam)
+        out = self(win_2d, win_intrinsics, win_extrinsics)
         return out.view(1, n_windows, self.num_joints_out, self.out_features)
 
 
@@ -49,7 +50,8 @@ class CoupledLSTM(CamLSTMBase):
     Basic LSTM model for predicting 3d poses using series of camera matrices
     """
 
-    cam_mat_shape = (3, 4)
+    intrinsic_shape = (3, 3)
+    extrinsic_shape = (3, 4)
 
     def __init__(self, num_joints_in, in_features, num_joints_out, out_features,
                  hidden_size, num_cells, head_layers, dropout=0.25):
@@ -68,36 +70,52 @@ class CoupledLSTM(CamLSTMBase):
         super().__init__(num_joints_in, in_features, num_joints_out, out_features,
                  hidden_size, num_cells, head_layers, dropout)
 
-        self.lstm_layers = nn.LSTM(num_joints_in*in_features + self.cam_mat_shape[0]*self.cam_mat_shape[1], 
+        self.lstm_layers = nn.LSTM(num_joints_in*in_features + 
+                                   self.intrinsic_shape[0]*self.intrinsic_shape[1] + 
+                                   self.extrinsic_shape[0]*self.extrinsic_shape[1], 
                                    hidden_size, num_cells, batch_first=True, dropout=dropout)
+        self.bn_lstm = nn.BatchNorm1d(hidden_size)
 
-        mlp_layers = [nn.Linear(hidden_size, head_layers[0]), nn.LeakyReLU(), nn.Dropout(dropout)]
-        
+        self.bn_layers = [self.bn_lstm]
+
+        mlp_layers = [nn.Linear(hidden_size, head_layers[0])]
+        bn = nn.BatchNorm1d(head_layers[0])
+        self.bn_layers.append(bn)
+        mlp_layers += [bn, nn.LeakyReLU(), nn.Dropout(dropout)]
+
         for i in range(len(head_layers)-1):
             mlp_layers.append(nn.Linear(head_layers[i], head_layers[i+1]))
-            mlp_layers.append(nn.LeakyReLU())
-            mlp_layers.append(nn.Dropout(dropout))
+            bn = nn.BatchNorm1d(head_layers[i+1])
+            self.bn_layers.append(bn)
+            mlp_layers += [bn, nn.LeakyReLU(), nn.Dropout(dropout)]
 
         mlp_layers.append(nn.Linear(head_layers[-1], self.out_features*num_joints_out))
 
         self.mlp_layers = nn.Sequential(*mlp_layers)
 
-    def forward(self, input_2d, input_cam):
-        assert len(input_2d.shape) == 4 and len(input_cam.shape) == 4
+    def set_bn_momentum(self, momentum):
+        for bn in self.bn_layers:
+            bn.momentum = momentum
+
+    def forward(self, input_2d, input_intrinsics, input_extrinsics):
+        assert len(input_2d.shape) == 4 and len(input_intrinsics.shape) == 4 and len(input_extrinsics.shape) == 4
         assert input_2d.shape[-2] == self.num_joints_in
         assert input_2d.shape[-1] == self.in_features
-        
-        assert input_cam.shape[-2] == self.cam_mat_shape[0]
-        assert input_cam.shape[-1] == self.cam_mat_shape[1]
 
         # Flatten input (leaving batch and sequence dimension intact)
         flattened_pose_dim = self.num_joints_in*self.in_features
         flattened_input_2d = input_2d.reshape((input_2d.shape[0], input_2d.shape[1], flattened_pose_dim))
 
-        flattened_cam_dim = self.cam_mat_shape[0]*self.cam_mat_shape[1]
-        flattened_input_cam = input_cam.reshape((input_cam.shape[0], input_cam.shape[1], flattened_cam_dim))
+        flattened_intrinsic_dim = self.intrinsic_shape[0]*self.intrinsic_shape[1]
+        flattened_extrinsic_dim = self.extrinsic_shape[0]*self.extrinsic_shape[1]
+        
+        flattened_input_intrinsics = input_intrinsics.reshape((input_intrinsics.shape[0], input_intrinsics.shape[1], 
+            flattened_intrinsic_dim))
+        
+        flattened_input_extrinsics = input_extrinsics.reshape((input_extrinsics.shape[0], input_extrinsics.shape[1], 
+            flattened_extrinsic_dim))
 
-        x = torch.cat([flattened_input_2d, flattened_input_cam], dim=2)
+        x = torch.cat([flattened_input_2d, flattened_input_intrinsics, flattened_input_extrinsics], dim=2)
 
         # LSTM initial states
         h_0 = torch.zeros(self.num_cells, x.shape[0], self.hidden_size)
@@ -108,7 +126,10 @@ class CoupledLSTM(CamLSTMBase):
             c_0 = c_0.cuda()
 
         lstm_out, _ = self.lstm_layers(x, (h_0, c_0))
-        mlp_out = self.mlp_layers(lstm_out[:, -1, :])
+        x_last = lstm_out[:, -1, :]
+        x_bn = self.bn_lstm(x_last)
+
+        mlp_out = self.mlp_layers(x_bn)
 
         return mlp_out.reshape(input_2d.shape[0], 1, self.num_joints_out, self.out_features)
 

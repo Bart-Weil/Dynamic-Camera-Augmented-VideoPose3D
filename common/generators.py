@@ -47,7 +47,8 @@ class ChunkedGenerator:
         self.seq_length = chunk_length + 2*pad
 
         # Initialize buffers
-        self.batch_cam = np.empty((batch_size, self.seq_length, 3, 4))
+        self.batch_intrinsic = np.empty((batch_size, self.seq_length, 3, 3))
+        self.batch_extrinsic = np.empty((batch_size, self.seq_length, 3, 4))
         self.batch_3d = np.empty((batch_size, chunk_length, poses_3d[0].shape[-2], poses_3d[0].shape[-1]))
         self.batch_2d = np.empty((batch_size, self.seq_length, poses_2d[0].shape[-2], poses_2d[0].shape[-1]))
 
@@ -105,13 +106,12 @@ class ChunkedGenerator:
             start_idx, pairs = self.next_pairs()
             for b_i in range(start_idx, self.num_batches):
                 chunks = pairs[b_i*self.batch_size : (b_i+1)*self.batch_size]
+
                 for i, (seq_i, start_3d, end_3d) in enumerate(chunks):
                     start_2d = start_3d - self.pad - self.causal_shift
                     end_2d = end_3d + self.pad - self.causal_shift
                     self.batch_2d[i] = self.pad_chunk(self.poses_2d[seq_i], start_2d, end_2d)
                     
-                    batch_extrinsics = self.pad_chunk(self.cams[seq_i]['extrinsics'], start_2d, end_2d)
-
                     cam_dict = self.cams[seq_i]['intrinsics']
                     fx, fy = cam_dict['focal_length']
                     cx, cy = cam_dict['center']
@@ -121,15 +121,23 @@ class ChunkedGenerator:
                         [0,  fy, cy],
                         [0,  0,   1]
                     ], dtype=np.float32)
+
+                    batch_intrinsics = np.tile(seq_intrinsic_mat, (self.cams[seq_i]['extrinsics'].shape[0], 1, 1))
+
+                    batch_intrinsics = self.pad_chunk(batch_intrinsics, start_2d, end_2d).astype(np.float32)
+
                     # Compute camera matrices
-                    self.batch_cam[i] = seq_intrinsic_mat @ batch_extrinsics
+                    self.batch_intrinsic[i] = batch_intrinsics
+
+                    batch_extrinsics = self.pad_chunk(self.cams[seq_i]['extrinsics'], start_2d, end_2d).astype(np.float32)
+                    self.batch_extrinsic[i] = batch_extrinsics
 
                     self.batch_3d[i] = self.pad_chunk(self.poses_3d[seq_i], start_3d, end_3d)
 
                 if self.endless:
                     self.state = (b_i + 1, pairs)
                 
-                yield self.batch_cam, self.batch_3d, self.batch_2d
+                yield self.batch_intrinsic, self.batch_extrinsic, self.batch_3d, self.batch_2d
             
             if self.endless:
                 self.state = None
@@ -187,17 +195,23 @@ class UnchunkedGenerator:
                 [0,  0,   1]
             ], dtype=np.float32)
 
-            cam_mat_seq = seq_intrinsic_mat @ cam_seq['extrinsics']
-
             batch_3d = None if seq_3d is None else np.expand_dims(seq_3d, axis=0)
             batch_2d = np.expand_dims(np.pad(seq_2d,
                         ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
                         'edge'), axis=0)
-            batch_cam = np.expand_dims(np.pad(cam_mat_seq,
+            
+            batch_intrinsics = np.tile(seq_intrinsic_mat, (cam_seq['extrinsics'].shape[0], 1, 1))
+            batch_intrinsics = np.expand_dims(np.pad(batch_intrinsics,
                         ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
                         'edge'), axis=0)
+            
+            batch_extrinsics = np.expand_dims(np.pad(cam_seq['extrinsics'],
+                        ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
+                        'edge'), axis=0)  
+            # print(repr(batch_3d[0, 0]), '\n', repr(batch_2d[0, 121]), '\n', repr(batch_intrinsics[0, 121]), '\n', repr(batch_extrinsics[0, 121]))
+            # exit()
 
-            yield batch_cam, batch_3d, batch_2d, {
+            yield batch_intrinsics, batch_extrinsics, batch_3d, batch_2d, {
                 'cam_velocity': cam_seq['cam_velocity'],
                 'cam_acceleration': cam_seq['cam_acceleration'],
                 'cam_angular_velocity': cam_seq['cam_angular_velocity'],

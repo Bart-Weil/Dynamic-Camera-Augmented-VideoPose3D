@@ -44,7 +44,7 @@ except OSError as e:
         raise RuntimeError('Unable to create checkpoint directory:', args.checkpoint)
 
 print('Loading dataset...')
-dataset_path = 'data/data_3d_' + args.dataset + '.npz'
+dataset_path = '/vol/bitbucket/bw1222/data/npz/data_3d_' + args.dataset + '.npz'
 match args.dataset:
     case 'h36m':
         dataset = Human36mDataset(dataset_path)
@@ -55,7 +55,7 @@ match args.dataset:
     case '3dpw':
         dataset = ThreeDPWDataset(dataset_path)
     case 'custom':
-        dataset = CustomDataset('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
+        dataset = CustomDataset('/vol/bitbucket/bw1222/data/npz/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
     case _:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
@@ -68,7 +68,7 @@ for subject in dataset.subjects():
         if 'positions' in anim:
             if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
                 pos_3d = anim['positions']
-                pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                # pos_3d -= pos_3d[0, :, :] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
             else:
                 positions_3d = []
@@ -79,7 +79,7 @@ for subject in dataset.subjects():
                 anim['positions_3d'] = positions_3d
 
 print('Loading 2D detections...')
-keypoints = np.load('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz', allow_pickle=True)
+keypoints = np.load('/vol/bitbucket/bw1222/data/npz/data_2d_' + args.dataset + '_' + args.keypoints + '.npz', allow_pickle=True)
 keypoints_metadata = keypoints['metadata'].item()
 keypoints_symmetry = keypoints_metadata['keypoints_symmetry']
 kps_left, kps_right = list(keypoints_symmetry[0]), list(keypoints_symmetry[1])
@@ -119,14 +119,6 @@ for subject in keypoints.keys():
                 cam = dataset.cameras()[subject][cam_idx]
                 kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=cam['res_w'], h=cam['res_h'])
                 keypoints[subject][action][cam_idx] = kps
-
-subjects_train = args.subjects_train.split(',')
-subjects_validation = args.subjects_validation.split(',')
-subjects_semi = [] if not args.subjects_unlabeled else args.subjects_unlabeled.split(',')
-if not args.render:
-    subjects_test = args.subjects_test.split(',')
-else:
-    subjects_test = [args.viz_subject]
             
 def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
     out_poses_3d = []
@@ -188,14 +180,61 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
 action_filter = None if args.actions == '*' else args.actions.split(',')
 if action_filter is not None:
     print('Selected actions:', action_filter)
+
+rng = np.random.default_rng(seed=42)
+split_subjects = list(dataset.subjects())
+rng.shuffle(split_subjects)
+
+subjects_train, subjects_validate, subjects_test = None, None, None
+
+if not args.evaluate and not args.tune_hyperparameters:
+    if args.subjects_train and args.subjects_test:
+        subjects_train = args.subjects_train.split(',')
+        subjects_test = args.subjects_test.split(',') if args.subjects_test else None
+    else:
+        # Split subjects into train, validation and test sets
+        num_train = int(len(split_subjects) * 0.9)
+
+        subjects_train = split_subjects[:num_train]
+        subjects_test = split_subjects[num_train:]
+elif args.tune_hyperparameters:
+    if args.subjects_train and args.subjects_test and args.subjects_validate:
+        subjects_train = args.subjects_train.split(',')
+        subjects_validate = args.subjects_validate.split(',')
+        subjects_test = args.subjects_test.split(',')
+    else:
+        num_train = int(len(split_subjects) * 0.8)
+        num_validate = int(len(split_subjects) * 0.1)
+        num_test = len(split_subjects) - num_train - num_validate
+        subjects_train = split_subjects[:num_train]
+        subjects_validate = split_subjects[num_train:num_train + num_validate]
+        subjects_test = split_subjects[num_train + num_validate:num_train + num_validate + num_test]
+
+elif args.evaluate:
+    if args.subjects_test:
+        subjects_test = args.subjects_test.split(',')
+    elif args.viz_subject:
+        subjects_test = [args.viz_subject]
+    else:
+        raise ValueError('Please specify subjects to evaluate on with --subjects-test')
+
+elif args.render:
+    subjects_test = [args.viz_subject]
     
-cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_validation, action_filter)
-cameras_test, poses_test, poses_test_2d = fetch(subjects_test, action_filter)
+else:
+    raise ValueError('Invalid mode, please specify --evaluate or --render')
+
+if subjects_train:
+    cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
+if subjects_test:
+    cameras_test, poses_test, poses_test_2d = fetch(subjects_test, action_filter)
+if subjects_validate:
+    cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_validate, action_filter)
+
 
 print("Subjects: ", dataset.subjects())
-print("Evaluation Subjects: ", ", ".join(subjects_test))
 
-match args.model_name:
+match args.use_model:
     case 'FCN':
         filter_widths = [int(x) for x in args.fcn_architecture.split(',')]
         
@@ -231,24 +270,21 @@ match args.model_name:
         else:
             causal_shift = 0
         lstm_head_layers = [int(x) for x in args.lstm_head_architecture.split(',')]
+
+        lstm_hyperparams = {
+            'num_joints_in': poses_test_2d[0].shape[-2],
+            'in_features': poses_test_2d[0].shape[-1],
+            'num_joints_out': poses_test[0].shape[-2],
+            'out_features': poses_test[0].shape[-1],
+            'hidden_size': args.lstm_hidden_features,
+            'num_cells': args.lstm_cells, 
+            'head_layers': lstm_head_layers,
+            'dropout': args.lstm_dropout
+        }
         
-        model_pos_train = CoupledLSTM(num_joints_in = poses_test_2d[0].shape[-2],
-                                in_features = poses_test_2d[0].shape[-1],
-                                num_joints_out = poses_test[0].shape[-2],
-                                out_features = poses_test[0].shape[-1],
-                                hidden_size = args.lstm_hidden_features,
-                                num_cells = args.lstm_cells, 
-                                head_layers = lstm_head_layers,
-                                dropout = args.lstm_dropout)
+        model_pos_train = CoupledLSTM(**lstm_hyperparams)
         
-        model_pos = CoupledLSTM(num_joints_in = poses_test_2d[0].shape[-2],
-                                in_features = poses_test_2d[0].shape[-1],
-                                num_joints_out = poses_test[0].shape[-2],
-                                out_features = poses_test[0].shape[-1],
-                                hidden_size = args.lstm_hidden_features,
-                                num_cells = args.lstm_cells, 
-                                head_layers = lstm_head_layers,
-                                dropout = args.lstm_dropout)
+        model_pos = CoupledLSTM(**lstm_hyperparams)
         
     case 'Transformer':
         receptive_field = 243
@@ -262,31 +298,22 @@ match args.model_name:
         # Parse the transformer head architecture
         transformer_head_layers = [int(x) for x in args.transformer_head_architecture.split(',')]
 
-        model_pos_train = CoupledTransformer(
-            num_joints_in = poses_test_2d[0].shape[-2],
-            in_features = poses_test_2d[0].shape[-1],
-            num_joints_out = poses_test[0].shape[-2],
-            out_features = poses_test[0].shape[-1],
-            d_model = args.d_model,
-            num_layers = args.num_layers,
-            n_heads = args.n_heads,
-            dim_feedforward = args.dim_feedforward,
-            head_layers = transformer_head_layers,
-            dropout = args.transformer_dropout
-        )
+        transformer_hyperparams = {
+            'num_joints_in': poses_test_2d[0].shape[-2],
+            'in_features': poses_test_2d[0].shape[-1],
+            'num_joints_out': poses_test[0].shape[-2],
+            'out_features': poses_test[0].shape[-1],
+            'd_model': args.d_model,
+            'num_layers': args.num_layers,
+            'n_heads': args.n_heads,
+            'dim_feedforward': args.dim_feedforward,
+            'head_layers': transformer_head_layers,
+            'dropout': args.transformer_dropout
+        }
 
-        model_pos = CoupledTransformer(
-            num_joints_in = poses_test_2d[0].shape[-2],
-            in_features = poses_test_2d[0].shape[-1],
-            num_joints_out = poses_test[0].shape[-2],
-            out_features = poses_test[0].shape[-1],
-            d_model = args.d_model,
-            num_layers = args.num_layers,
-            n_heads = args.n_heads,
-            dim_feedforward = args.dim_feedforward,
-            head_layers = transformer_head_layers,
-            dropout = args.transformer_dropout
-        )
+        model_pos_train = CoupledTransformer(**transformer_hyperparams)
+        model_pos = CoupledTransformer(**transformer_hyperparams)
+
     case 'LSTM-Uncoupled':
         receptive_field = 243
         pad = (receptive_field - 1) // 2 # Padding on each side
@@ -365,9 +392,6 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
         
         lr = checkpoint['lr']
-            
-    print('** Note: reported losses are averaged over all frames and test-time augmentation is not used here.')
-    print('** The final evaluation will be carried out after the last training epoch.')
 
     best_validation_p1_error = float('inf')
     while epoch < n_epochs:
@@ -376,30 +400,42 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
         N = 0
         model_pos_train.train()
 
-        for batch_cam, batch_3d, batch_2d in train_generator.next_epoch():
+        for batch_intrinsic, batch_extrinsic, batch_3d, batch_2d in train_generator.next_epoch():
             inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-            inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
+            inputs_intrinsic = torch.from_numpy(batch_intrinsic.astype('float32'))
+            inputs_extrinsic = torch.from_numpy(batch_extrinsic.astype('float32'))
+            # batch_t = inputs_2d.shape[1]//2
+            # print(inputs_3d[350, 0])
+            # print(inputs_2d[350, batch_t])
+            # print(inputs_intrinsic[350, batch_t])
+            # print(inputs_extrinsic[350, batch_t])
+            # exit()
             if torch.cuda.is_available():
                 inputs_3d = inputs_3d.cuda()
                 inputs_2d = inputs_2d.cuda()
-                inputs_cam = inputs_cam.cuda()
-            inputs_3d[:, :, 0] = 0
+                inputs_intrinsic = inputs_intrinsic.cuda()
+                inputs_extrinsic = inputs_extrinsic.cuda()
+
+            #inputs_3d[:, :, 0] = 0
 
             optimizer.zero_grad()
 
             # Predict 3D poses
             if isinstance(model_pos_train, (CamLSTMBase, CamTransformerBase)):
-                predicted_3d_pos = model_pos_train(inputs_2d, inputs_cam)
+                predicted_3d_pos = model_pos_train(inputs_2d, inputs_intrinsic, inputs_extrinsic)
             elif isinstance(model_pos_train, TemporalModelBase):
                 predicted_3d_pos = model_pos_train(inputs_2d)
 
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+            # check if loss is NaN
+            assert not torch.isnan(loss_3d_pos), 'Loss is NaN, check your model and data!'
             epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
             N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
             loss_total = loss_3d_pos
-            loss_total.backward()
+
+            loss_total.backward()            
 
             optimizer.step()
 
@@ -415,19 +451,21 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
             
             if not args.no_eval:
                 # Evaluate on test set
-                for batch_cam, batch_3d, batch_2d, _ in test_generator.next_epoch():
+                for batch_intrinsic, batch_extrinsic, batch_3d, batch_2d, _ in test_generator.next_epoch():
                     inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
                     inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                    inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
+                    inputs_intrinsic = torch.from_numpy(batch_intrinsic.astype('float32'))
+                    inputs_extrinsic = torch.from_numpy(batch_extrinsic.astype('float32'))                    
                     if torch.cuda.is_available():
                         inputs_3d = inputs_3d.cuda()
                         inputs_2d = inputs_2d.cuda()
-                        inputs_cam = inputs_cam.cuda()
-                    inputs_3d[:, :, 0] = 0
+                        inputs_intrinsic = inputs_intrinsic.cuda()
+                        inputs_extrinsic = inputs_extrinsic.cuda()                    
+                    #inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
                     if isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
-                        predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam,
+                        predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_intrinsic, inputs_extrinsic,
                                                                       test_generator.seq_length)
                     elif isinstance(model_pos, TemporalModelBase):
                         predicted_3d_pos = model_pos(inputs_2d)
@@ -439,35 +477,36 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
                 losses_3d_valid.append(epoch_loss_3d_valid / N)
                 best_validation_p1_error = min(best_validation_p1_error, epoch_loss_3d_valid / N)
 
-                # Evaluate on training set, this time in evaluation mode
-                epoch_loss_3d_train_eval = 0
-                N = 0
-                for batch_cam, batch, batch_2d, _ in train_generator_eval.next_epoch():
-                    if batch_2d.shape[1] == 0:
-                        # This can only happen when downsampling the dataset
-                        continue
-                       
-                    inputs_3d = torch.from_numpy(batch.astype('float32'))
-                    inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
-                    inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
+                # # Evaluate on training set, this time in evaluation mode
+                # if train_generator_eval is not None:
+                #     epoch_loss_3d_train_eval = 0
+                #     N = 0
+                #     for batch_cam, batch, batch_2d, _ in train_generator_eval.next_epoch():
+                #         if batch_2d.shape[1] == 0:
+                #             # This can only happen when downsampling the dataset
+                #             continue
+                        
+                #         inputs_3d = torch.from_numpy(batch.astype('float32'))
+                #         inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                #         inputs_cam = torch.from_numpy(batch_cam.astype('float32'))
 
-                    if torch.cuda.is_available():
-                        inputs_3d = inputs_3d.cuda()
-                        inputs_2d = inputs_2d.cuda()
-                        inputs_cam = inputs_cam.cuda()
-                    inputs_3d[:, :, 0] = 0
+                #         if torch.cuda.is_available():
+                #             inputs_3d = inputs_3d.cuda()
+                #             inputs_2d = inputs_2d.cuda()
+                #             inputs_cam = inputs_cam.cuda()
+                #         #inputs_3d[:, :, 0] = 0
 
-                    # Predict 3D poses
-                    if isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
-                        predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, train_generator.seq_length)
-                    elif isinstance(model_pos, TemporalModelBase):
-                        predicted_3d_pos = model_pos(inputs_2d)
+                #         # Predict 3D poses
+                #         if isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
+                #             predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, train_generator.seq_length)
+                #         elif isinstance(model_pos, TemporalModelBase):
+                #             predicted_3d_pos = model_pos(inputs_2d)
 
-                    loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
-                    epoch_loss_3d_train_eval += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
-                    N += inputs_3d.shape[0]*inputs_3d.shape[1]
+                #         loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+                #         epoch_loss_3d_train_eval += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
+                #         N += inputs_3d.shape[0]*inputs_3d.shape[1]
 
-                losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
+                # losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
 
         elapsed = (time() - start_time)/60
         
@@ -475,25 +514,26 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
             print('[%d] time %.2f lr %f 3d_train %f' % (
                     epoch + 1,
                     elapsed,
-                    lr,
+                    learning_rate,
                     losses_3d_train[-1] * 1000))
         else:
-            print('[%d] time %.2f lr %f 3d_train %f 3d_eval %f 3d_valid %f' % (
+            #print('[%d] time %.2f lr %f 3d_train %f 3d_eval %f 3d_valid %f' % (
+            print('[%d] time %.2f lr %f 3d_train %f 3d_valid %f' % (
                     epoch + 1,
                     elapsed,
-                    lr,
+                    learning_rate,
                     losses_3d_train[-1] * 1000,
-                    losses_3d_train_eval[-1] * 1000,
+                    # losses_3d_train_eval[-1] * 1000,
                     losses_3d_valid[-1] * 1000))
         
         # Decay learning rate exponentially
-        lr *= lr_decay
+        learning_rate *= lr_decay
         for param_group in optimizer.param_groups:
             param_group['lr'] *= lr_decay
         epoch += 1
         
         # Decay BatchNorm momentum
-        if isinstance(model_pos_train, TemporalModelBase):
+        if isinstance(model_pos_train, (TemporalModelBase, CamLSTMBase)):
             momentum = initial_momentum * np.exp(-epoch/args.epochs * np.log(initial_momentum/final_momentum))
             model_pos_train.set_bn_momentum(momentum)
             
@@ -504,7 +544,7 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
             
             torch.save({
                 'epoch': epoch,
-                'lr': lr,
+                'lr': learning_rate,
                 'random_state': train_generator.random_state(),
                 'optimizer': optimizer.state_dict(),
                 'model_pos': model_pos_train.state_dict(),
@@ -518,10 +558,10 @@ def train(n_epochs, train_generator, train_generator_eval, test_generator,
                 import matplotlib.pyplot as plt
             
             plt.figure()
-            epoch_x = np.arange(3, len(losses_3d_train)) + 1
-            plt.plot(epoch_x, losses_3d_train[3:], '--', color='C0')
-            plt.plot(epoch_x, losses_3d_train_eval[3:], color='C0')
-            plt.plot(epoch_x, losses_3d_valid[3:], color='C1')
+            epoch_x = np.arange(0, len(losses_3d_train)) + 1
+            plt.plot(epoch_x, losses_3d_train, color='C0')
+            # plt.plot(epoch_x, losses_3d_train_eval[3:], color='C0')
+            plt.plot(epoch_x, losses_3d_valid, color='C1')
             plt.legend(['3d train', '3d train (eval)', '3d valid (eval)'])
             plt.ylabel('MPJPE (m)')
             plt.xlabel('Epoch')
@@ -540,38 +580,10 @@ if args.tune_hyperparameters:
     if args.use_model not in search_space:
         raise ValueError(f"Model '{args.use_model}' not found in gridsearch.json")
     
-    lstm_hyperparams = {
-        'num_joints_in': poses_test_2d[0].shape[-2],
-        'in_features': poses_test_2d[0].shape[-1],
-        'num_joints_out': poses_test[0].shape[-2],
-        'out_features': poses_test[0].shape[-1],
-        'hidden_size': args.lstm_hidden_features,
-        'num_cells': args.lstm_cells, 
-        'head_layers': lstm_head_layers,
-        'dropout': args.lstm_dropout
-    }
-
-    transformer_hyperparams = {
-        'num_joints_in': poses_test_2d[0].shape[-2],
-        'in_features': poses_test_2d[0].shape[-1],
-        'num_joints_out': poses_test[0].shape[-2],
-        'out_features': poses_test[0].shape[-1],
-        'd_model': args.d_model,
-        'num_layers': args.num_layers,
-        'n_heads': args.n_heads,
-        'dim_feedforward': args.dim_feedforward,
-        'head_layers': transformer_head_layers,
-        'dropout': args.transformer_dropout
-    }
-
-    cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
-    
-    train_generator_eval = UnchunkedGenerator(cameras_train, poses_train, poses_train_2d,
-            pad=pad, causal_shift=causal_shift)
-    validation_generator = UnchunkedGenerator(cameras_test, poses_test, poses_test_2d,
+    validation_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
             pad=pad, causal_shift=causal_shift,
             kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-    print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
+
     print('INFO: Validation on {} frames'.format(validation_generator.num_frames()))
     
     print(f"Running grid search for model: {args.use_model}")
@@ -581,10 +593,10 @@ if args.tune_hyperparameters:
     for idx, params in enumerate(search_space[args.use_model]):
         print(f"  Trial {idx + 1}: {params}")
         hyperparams = {param: value for param, value in params.items() if param not in [
-            'learning_rate', 'learning_rate_decay', 'batch_size']}
+            'learning_rate', 'lr_decay', 'batch_size']}
         
         lr = params['learning_rate'] if 'learning_rate' in params else args.learning_rate
-        lr_decay = params['learning_rate_decay'] if 'learning_rate_decay' in params else args.lr_decay
+        lr_decay = params['lr_decay'] if 'lr_decay' in params else args.lr_decay
         batch_size = params['batch_size'] if 'batch_size' in params else args.batch_size
 
         train_generator = ChunkedGenerator(batch_size//args.stride, cameras_train, poses_train,
@@ -608,7 +620,7 @@ if args.tune_hyperparameters:
         
         optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
             
-        best_validation_p1_error = train(args.tuning_epochs, train_generator,
+        best_validation_p1_error = train(args.tuning_epochs, train_generator, None,
             validation_generator, model_pos_train,
             model_pos, optimizer,
             save_state=False, plot_losses=False, learning_rate=lr, lr_decay=lr_decay)
@@ -623,7 +635,6 @@ if args.tune_hyperparameters:
 elif not args.evaluate:
     print("Training Subjects: ", ", ".join(subjects_train))
     print("Test Subjects: ", ", ".join(subjects_test))
-    cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
 
     lr = args.learning_rate
 
@@ -638,8 +649,9 @@ elif not args.evaluate:
                                               pad=pad, causal_shift=causal_shift)
     print('INFO: Training on {} frames'.format(train_generator_eval.num_frames()))
     
-    train(args.epochs, optimizer, train_generator, test_generator, model_pos_train, model_pos, save_state=True, plot_losses=True)
-
+    train(args.epochs, train_generator, train_generator_eval,
+        test_generator, model_pos_train, model_pos, optimizer,
+        save_state=True, plot_losses=True, learning_rate=lr, lr_decay=lr_decay)
 
 # Evaluate
 def evaluate(test_generator, action=None, return_predictions=False, use_trajectory_model=False):
@@ -656,15 +668,16 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
         N = 0
 
-        for cams, batch, batch_2d, seq_info in test_generator.next_epoch():
-            inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+        for batch_intrinsic, batch_extrinsic, batch, batch_2d, seq_info in test_generator.next_epoch():
             inputs_3d = torch.from_numpy(batch.astype('float32'))
-            inputs_cam = torch.from_numpy(cams.astype('float32'))
-
+            inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+            inputs_intrinsic = torch.from_numpy(batch_intrinsic.astype('float32'))
+            inputs_extrinsic = torch.from_numpy(batch_extrinsic.astype('float32'))
             if torch.cuda.is_available():
-                inputs_2d = inputs_2d.cuda()
                 inputs_3d = inputs_3d.cuda()
-                inputs_cam = inputs_cam.cuda()
+                inputs_2d = inputs_2d.cuda()
+                inputs_intrinsic = inputs_intrinsic.cuda()
+                inputs_extrinsic = inputs_extrinsic.cuda()
 
             inputs_3d[:, :, 0] = 0    
 
@@ -672,7 +685,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             if isinstance(model_pos, TemporalModelBase):
                 predicted_3d_pos = model_pos(inputs_2d)
             else:
-                predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
+                predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_intrinsic, inputs_extrinsic, test_generator.seq_length)
                 
             if return_predictions:
                 return predicted_3d_pos.squeeze(0).cpu().numpy()
@@ -747,24 +760,24 @@ if args.render:
             gt_frames = list(ground_truth)
             world_prediction_frames = []
             world_gt_frames = []
-            for i in range(len(prediction_frames)):#
-                prediction_frame = prediction_frames[i]
-                gt_frame = gt_frames[i]
+            # for i in range(len(prediction_frames)):#
+            #     prediction_frame = prediction_frames[i]
+            #     gt_frame = gt_frames[i]
 
-                prediction_frame[:, 1] = -prediction_frame[:, 1]
-                gt_frame[:, 1] = -gt_frame[:, 1]
+            #     prediction_frame[:, 1] = -prediction_frame[:, 1]
+            #     gt_frame[:, 1] = -gt_frame[:, 1]
 
-                cam_extrinsic = cams['extrinsics'][i]
-                cam_orientation = cam_extrinsic[:, :3]
-                cam_translation = -cam_orientation.T @ cam_extrinsic[:, 3]
-                world_prediction = (prediction_frames[i] @ cam_orientation) + cam_translation
-                world_gt = (gt_frames[i] @ cam_orientation) + cam_translation
+            #     cam_extrinsic = cams['extrinsics'][i]
+            #     cam_orientation = cam_extrinsic[:, :3]
+            #     cam_translation = -cam_orientation.T @ cam_extrinsic[:, 3]
+            #     world_prediction = (prediction_frames[i] @ cam_orientation) + cam_translation
+            #     world_gt = (gt_frames[i] @ cam_orientation) + cam_translation
 
-                world_prediction_frames.append(world_prediction)
-                world_gt_frames.append(world_gt)
+            #     world_prediction_frames.append(world_prediction)
+            #     world_gt_frames.append(world_gt)
 
-            prediction = np.array(world_prediction_frames)
-            ground_truth = np.array(world_gt_frames)
+            # prediction = np.array(world_prediction_frames)
+            # ground_truth = np.array(world_gt_frames)
         else:
             # If the ground truth is not available, take the camera extrinsic params from a random subject.
             # They are almost the same, and anyway, we only need this for visualization purposes.
@@ -772,9 +785,9 @@ if args.render:
                 if 'orientation' in dataset.cameras()[subject][args.viz_camera]:
                     rot = dataset.cameras()[subject][args.viz_camera]['orientation']
                     break
-            prediction = camera_to_world(prediction, R=rot, t=0)
+            # prediction = camera_to_world(prediction, R=rot, t=0)
             # We don't have the trajectory, but at least we can rebase the height
-            prediction[:, :, 2] -= np.min(prediction[:, :, 2])
+            # prediction[:, :, 2] -= np.min(prediction[:, :, 2])
         
         anim_output = {'Reconstruction': prediction}
         if ground_truth is not None and not args.viz_no_ground_truth:

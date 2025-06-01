@@ -11,6 +11,12 @@ h36m_skeleton_nonstatic = Skeleton(
     joints_right=[1, 2, 3, 14, 15, 16]
 )
 
+coco_skeleton = Skeleton(
+    parents = [-1, 0, 1, 2, 3, 1, 2, 3, 1, 8, 9, 1, 11, 12, 0, 0, 14, 15],
+    joints_left = [2, 3, 4, 8, 9, 10, 14, 16],
+    joints_right = [5, 6, 7, 11, 12, 13, 15, 17]
+)
+
 class CMUMocapDataset(MocapDataset):
     def __init__(self, path, remove_static_joints=True):
         """
@@ -21,7 +27,7 @@ class CMUMocapDataset(MocapDataset):
             extrinsics_path (str): Path to the npz file containing the 'cam_extrinsics' dict.
             remove_static_joints (bool): (Unused here) whether to remove static joints.
         """
-        super().__init__(fps=240, skeleton_2d=h36m_skeleton_nonstatic, skeleton_3d=h36m_skeleton_nonstatic)
+        super().__init__(fps=240, skeleton_2d=coco_skeleton, skeleton_3d=h36m_skeleton_nonstatic)
         data = np.load(path, allow_pickle=True)
 
         pose_data = data['positions_3d'].item()
@@ -32,7 +38,7 @@ class CMUMocapDataset(MocapDataset):
 
         CMU_cam_intrinsic = {
             'id': '1',
-            'center': np.array([0, 0], dtype='float32'),
+            'center': np.array([640, 360], dtype='float32'),
             'focal_length': np.array([1000, 1000], dtype='float32'),
             'radial_distortion': np.array([0, 0, 0], dtype='float32'),
             'tangential_distortion': np.array([0, 0], dtype='float32'),

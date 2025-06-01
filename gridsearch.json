@@ -1,5 +1,5 @@
 {
-    "LSTM": [
+    "LSTM-Coupled": [
         {"learning_rate": 0.001, "learning_rate_decay": 0.99, "lstm_cells": 2},
         {"learning_rate": 0.001, "learning_rate_decay": 0.99, "lstm_cells": 3},
         {"learning_rate": 0.001, "learning_rate_decay": 0.95, "lstm_cells": 2},

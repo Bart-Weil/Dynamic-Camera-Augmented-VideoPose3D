@@ -160,7 +160,7 @@ def render_animation(keypoints, keypoints_metadata, poses, skeleton_2d, skeleton
                 if j_parent == -1:
                     continue
                     
-                if len(parents_2d) == keypoints.shape[1] and keypoints_metadata['layout_name'] != 'coco':
+                if len(parents_2d) == keypoints.shape[1]:
                     # Draw skeleton only if keypoints match (otherwise we don't have the parents definition)
                     lines.append(ax_in.plot([keypoints[i, j, 0], keypoints[i, j_parent, 0]],
                                             [keypoints[i, j, 1], keypoints[i, j_parent, 1]], color='pink'))
@@ -170,7 +170,7 @@ def render_animation(keypoints, keypoints_metadata, poses, skeleton_2d, skeleton
                 if j_parent == -1:
                     continue
 
-                col = 'red' if j in parents_3d.joints_right() else 'black'
+                col = 'red' if j in skeleton_3d.joints_right() else 'black'
                 for n, ax in enumerate(ax_3d):
                     pos = poses[n][i]
                     lines_3d[n].append(ax.plot([pos[j, 0], pos[j_parent, 0]],
@@ -187,7 +187,7 @@ def render_animation(keypoints, keypoints_metadata, poses, skeleton_2d, skeleton
                 if j_parent == -1:
                     continue
                 
-                if len(parents_2d) == keypoints.shape[1] and keypoints_metadata['layout_name'] != 'coco':
+                if len(parents_2d) == keypoints.shape[1]:
                     lines[j-1][0].set_data([keypoints[i, j, 0], keypoints[i, j_parent, 0]],
                                            [keypoints[i, j, 1], keypoints[i, j_parent, 1]])
 

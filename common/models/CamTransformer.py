@@ -40,7 +40,8 @@ class CamTransformerBase(nn.Module):
     Do not instantiate directly; use a subclass (e.g. CoupledTransformer).
     """
 
-    cam_mat_shape = (3, 4)
+    intrinsic_shape = (3, 3)
+    extrinsic_shape = (3, 4)
 
     def __init__(
         self,
@@ -69,25 +70,18 @@ class CamTransformerBase(nn.Module):
         self.head_layers = head_layers
         self.dropout = dropout
 
-    def sliding_window(self, inputs_2d: torch.Tensor, inputs_cam: torch.Tensor, window_size: int):
-        """Apply model over a sliding window and stack outputs.
-        Args:
-            inputs_2d: (B=1, T, J, in_features)
-            inputs_cam: (B=1, T, 3, 4)
-            window_size: size of temporal window
-        Returns:
-            Tensor of shape (1, n_windows, num_joints_out, out_features)
-        """
+    def sliding_window(self, inputs_2d: torch.Tensor, inputs_intrinsic: torch.Tensor, inputs_extrinsic: torch.Tensor, window_size: int):
         _, T, J, _ = inputs_2d.shape
         n_windows = T - window_size + 1
         if n_windows <= 0:
             raise ValueError("window_size larger than sequence length")
-
+        
         axis_permutation = (0, 3, 1, 2)  # Move feature dim before time
         win_2d = inputs_2d.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
-        win_cam = inputs_cam.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
+        win_intrinsics = inputs_intrinsic.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
+        win_extrinsics = inputs_extrinsic.unfold(1, window_size, 1).squeeze().permute(axis_permutation)
 
-        out = self(win_2d, win_cam)
+        out = self(win_2d, win_intrinsics, win_extrinsics)
         return out.view(1, n_windows, self.num_joints_out, self.out_features)
 
 
@@ -131,16 +125,18 @@ class CoupledTransformer(CamTransformerBase):
         )
 
         # Embedding layer to project concatenated inputs to d_model
-        concat_dim = num_joints_in * in_features + self.cam_mat_shape[0] * self.cam_mat_shape[1]
+        concat_dim = (num_joints_in * in_features +
+            self.intrinsic_shape[0] * self.intrinsic_shape[1] + self.extrinsic_shape[0] * self.extrinsic_shape[1])
         self.input_projection = nn.Linear(concat_dim, d_model)
 
         # Positional encoding
         self.positional_encoding = PositionalEncoding(d_model, dropout)
+        self.pre_transformer_norm = nn.LayerNorm(d_model)
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
-            n_heads=n_heads,
+            nhead=n_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
@@ -164,33 +160,27 @@ class CoupledTransformer(CamTransformerBase):
         mlp_layers.append(nn.Linear(head_layers[-1], out_features * num_joints_out))
         self.mlp_layers = nn.Sequential(*mlp_layers)
 
-    def forward(self, input_2d: torch.Tensor, input_cam: torch.Tensor):
-        """Forward pass.
-        Args:
-            input_2d: Tensor (B, T, J_in, in_features)
-            input_cam: Tensor (B, T, 3, 4)
-        Returns:
-            Tensor (B, 1, num_joints_out, out_features)
-        """
+    def forward(self, input_2d: torch.Tensor, input_intrinsics: torch.Tensor, input_extrinsics: torch.Tensor):
+        assert not torch.isnan(input_intrinsics).any() and not torch.isnan(input_extrinsics).any(), "Input contains NaNs"
         # Shape validations
-        assert len(input_2d.shape) == 4 and len(input_cam.shape) == 4, "Invalid input dims"
-        assert (
-            input_2d.shape[-2] == self.num_joints_in and input_2d.shape[-1] == self.in_features
-        ), "Unexpected 2D input shape"
-        assert (
-            input_cam.shape[-2] == self.cam_mat_shape[0] and input_cam.shape[-1] == self.cam_mat_shape[1]
-        ), "Unexpected camera matrix shape"
+        assert len(input_2d.shape) == 4 and len(input_intrinsics.shape) == 4 and len(input_extrinsics.shape) == 4, "Invalid input dims"
 
         B, T, _, _ = input_2d.shape
 
         # Flatten inputs
         flat_2d = input_2d.reshape(B, T, -1)  # (B, T, J_in * in_features)
-        flat_cam = input_cam.reshape(B, T, -1)  # (B, T, 12)
-        x = torch.cat([flat_2d, flat_cam], dim=2)  # (B, T, concat_dim)
+        flat_intrinsics = input_intrinsics.reshape(B, T, -1)  # (B, T, 9)
+        flat_extrinsics = input_extrinsics.reshape(B, T, -1) # (B, T, 12)
+        x = torch.cat([flat_2d, flat_intrinsics, flat_extrinsics], dim=2)  # (B, T, concat_dim)
+
 
         # Project to d_model and add positional encoding
         x = self.input_projection(x)  # (B, T, d_model)
+        # check nan
+
         x = self.positional_encoding(x)  # (B, T, d_model)
+        x = self.pre_transformer_norm(x)
+        # check nan
 
         # Transformer encoder
         enc_out = self.transformer_encoder(x)  # (B, T, d_model)
