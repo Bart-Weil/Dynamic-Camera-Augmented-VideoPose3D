@@ -170,7 +170,7 @@ def render_animation(keypoints, keypoints_metadata, poses, skeleton_2d, skeleton
                 if j_parent == -1:
                     continue
 
-                col = 'red' if j in parents_3d.joints_right() else 'black'
+                col = 'red' if j in skeleton_3d.joints_right() else 'black'
                 for n, ax in enumerate(ax_3d):
                     pos = poses[n][i]
                     lines_3d[n].append(ax.plot([pos[j, 0], pos[j_parent, 0]],

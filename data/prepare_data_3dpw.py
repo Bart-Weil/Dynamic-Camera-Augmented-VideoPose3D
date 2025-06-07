@@ -19,8 +19,8 @@ import sys
 sys.path.append('../')
 from common.datasets.ThreeDPWDataset import ThreeDPWDataset
 
-output_filename = 'data_3d_3dpw'
-output_filename_2d = 'data_2d_3dpw_detections'
+output_filename = '/vol/bitbucket/bw1222/data/npz/data_3d_3dpw'
+output_filename_2d = '/vol/bitbucket/bw1222/data/npz/data_2d_3dpw_detections'
 
 if __name__ == '__main__':
     if os.path.basename(os.getcwd()) != 'data':

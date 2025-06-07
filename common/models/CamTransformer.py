@@ -136,6 +136,7 @@ class CoupledTransformer(CamTransformerBase):
 
         # Positional encoding
         self.positional_encoding = PositionalEncoding(d_model, dropout)
+        self.pre_transformer_norm = nn.LayerNorm(d_model)
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -191,7 +192,8 @@ class CoupledTransformer(CamTransformerBase):
         # Project to d_model and add positional encoding
         x = self.input_projection(x)  # (B, T, d_model)
         x = self.positional_encoding(x)  # (B, T, d_model)
-
+        x = self.pre_transformer_norm(x)
+        
         # Transformer encoder
         enc_out = self.transformer_encoder(x)  # (B, T, d_model)
 

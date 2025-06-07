@@ -196,9 +196,10 @@ class UnchunkedGenerator:
             batch_cam = np.expand_dims(np.pad(cam_mat_seq,
                         ((self.pad + self.causal_shift, self.pad - self.causal_shift), (0, 0), (0, 0)),
                         'edge'), axis=0)
-
+            
             yield batch_cam, batch_3d, batch_2d, {
                 'cam_velocity': cam_seq['cam_velocity'],
                 'cam_acceleration': cam_seq['cam_acceleration'],
                 'cam_angular_velocity': cam_seq['cam_angular_velocity'],
-                'cam_angular_acceleration': cam_seq['cam_angular_acceleration']}
+                'cam_angular_acceleration': cam_seq['cam_angular_acceleration'],
+                'pose_2d_flow': cam_seq['pose_2d_flow']}

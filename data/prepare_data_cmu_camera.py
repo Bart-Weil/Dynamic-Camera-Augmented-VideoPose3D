@@ -21,8 +21,8 @@ from common.datasets.CMUMocapDataset import CMUMocapDataset
 from common.camera import world_to_camera, image_coordinates, normalize_screen_coordinates, project_to_2d, project_to_2d_linear
 from common.utils import wrap
 
-output_filename = 'data_3d_CMU'
-output_filename_2d = 'data_2d_CMU_gt'
+output_filename = '/vol/bitbucket/bw1222/data/npz/data_3d_CMU'
+output_filename_2d = '/vol/bitbucket/bw1222/data/npz/data_2d_CMU_gt'
 
 if __name__ == '__main__':
     if os.path.basename(os.getcwd()) != 'data':
@@ -42,7 +42,7 @@ if __name__ == '__main__':
         positions_3d = {}
         cam_seqs = {}
 
-        for subject in tqdm(subjects[:40]):
+        for subject in tqdm(subjects[:30]):
             positions_3d[subject] = {}
             cam_seqs[subject] = {}
             # if benchmark flag set, only convert .pkl files containing _benchmark
@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
                 positions_3d[subject][f] = cam_positions
                 cam_seqs[subject][f] = scene_data['cam_sequence']
-                
+                cam_seqs[subject][f]['pose_2d_flow'] = scene_data['pose_2d_flow'][..., :2]
 
         print('Saving...')
         np.savez_compressed(output_filename, positions_3d=positions_3d, cam_seqs=cam_seqs)

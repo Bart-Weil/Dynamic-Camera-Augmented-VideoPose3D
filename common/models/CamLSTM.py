@@ -71,16 +71,29 @@ class CoupledLSTM(CamLSTMBase):
         self.lstm_layers = nn.LSTM(num_joints_in*in_features + self.cam_mat_shape[0]*self.cam_mat_shape[1], 
                                    hidden_size, num_cells, batch_first=True, dropout=dropout)
 
-        mlp_layers = [nn.Linear(hidden_size, head_layers[0]), nn.LeakyReLU(), nn.Dropout(dropout)]
+        self.bn_lstm = nn.BatchNorm1d(hidden_size)
+        self.bn_layers = [self.bn_lstm]
+        mlp_layers = [nn.Linear(hidden_size, head_layers[0])]
+
+        bn = nn.BatchNorm1d(head_layers[0])
+        
+        self.bn_layers.append(bn)
+        
+        mlp_layers += [bn, nn.LeakyReLU(), nn.Dropout(dropout)]
         
         for i in range(len(head_layers)-1):
             mlp_layers.append(nn.Linear(head_layers[i], head_layers[i+1]))
-            mlp_layers.append(nn.LeakyReLU())
-            mlp_layers.append(nn.Dropout(dropout))
+            bn = nn.BatchNorm1d(head_layers[i+1])
+            self.bn_layers.append(bn)
+            mlp_layers += [bn, nn.LeakyReLU(), nn.Dropout(dropout)]
 
         mlp_layers.append(nn.Linear(head_layers[-1], self.out_features*num_joints_out))
 
         self.mlp_layers = nn.Sequential(*mlp_layers)
+
+    def set_bn_momentum(self, momentum):
+        for bn in self.bn_layers:
+            bn.momentum = momentum
 
     def forward(self, input_2d, input_cam):
         assert len(input_2d.shape) == 4 and len(input_cam.shape) == 4
@@ -108,8 +121,11 @@ class CoupledLSTM(CamLSTMBase):
             c_0 = c_0.cuda()
 
         lstm_out, _ = self.lstm_layers(x, (h_0, c_0))
-        mlp_out = self.mlp_layers(lstm_out[:, -1, :])
-
+        
+        x_bn = self.bn_lstm(lstm_out[:, -1, :])
+        
+        mlp_out = self.mlp_layers(x_bn)
+        
         return mlp_out.reshape(input_2d.shape[0], 1, self.num_joints_out, self.out_features)
 
 

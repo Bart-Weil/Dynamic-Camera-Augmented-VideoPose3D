@@ -72,7 +72,8 @@ class CMUMocapDataset(MocapDataset):
                                       'cam_velocity': cam_seq['cam_velocity'],
                                       'cam_acceleration': cam_seq['cam_acceleration'],
                                       'cam_angular_velocity': cam_seq['cam_angular_velocity'],
-                                      'cam_angular_acceleration': cam_seq['cam_angular_acceleration']}
+                                      'cam_angular_acceleration': cam_seq['cam_angular_acceleration'],
+                                      'pose_2d_flow': cam_seq['pose_2d_flow']}
 
                 # Store positions and the per-frame cameras in the same structure.
                 self._data[subject][action_name] = {
