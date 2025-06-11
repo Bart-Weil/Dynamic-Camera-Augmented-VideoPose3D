@@ -55,13 +55,12 @@ match args.dataset:
         dataset = CMUMocapDataset(dataset_path)
     case 'CMU_3DPW':
         dataset = CMUMocapDataset(dataset_path, use_3DPW=True)
-    case '3dpw':
+    case '3DPW':
         dataset = ThreeDPWDataset(dataset_path)
     case 'custom':
         dataset = CustomDataset('data/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
     case _:
         raise ValueError(f"Unknown dataset: {args.dataset}")
-
 
 print('Preparing data...')
 for subject in dataset.subjects():
@@ -88,6 +87,7 @@ keypoints_symmetry = keypoints_metadata['keypoints_symmetry']
 kps_left, kps_right = list(keypoints_symmetry[0]), list(keypoints_symmetry[1])
 joints_left, joints_right = list(dataset.skeleton_2d().joints_left()), list(dataset.skeleton_2d().joints_right())
 keypoints = keypoints['positions_2d'].item()
+print(keypoints.keys(), '/vol/bitbucket/bw1222/data/npz/data_2d_' + args.dataset + '_' + args.keypoints + '.npz')
 
 for subject in dataset.subjects():
     assert subject in keypoints, 'Subject {} is missing from the 2D detections dataset'.format(subject)
@@ -289,16 +289,11 @@ match args.model_name:
 
     case 'FCN':
         filter_widths = [int(x) for x in args.fcn_architecture.split(',')]
-        
-        if not args.disable_optimizations and not args.dense and args.stride == 1:
-            # Use optimized model for single-frame predictions
-            model_pos_train = TemporalModelOptimized1f(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
-                                        filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels)
-        else:
-            # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
-            model_pos_train = TemporalModel(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
-                                        filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
-                                        dense=args.dense)
+
+        # When incompatible settings are detected (stride > 1, dense filters, or disabled optimization) fall back to normal model
+        model_pos_train = TemporalModel(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
+                                    filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
+                                    dense=args.dense)
             
         model_pos = TemporalModel(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
                                     filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,

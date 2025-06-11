@@ -52,7 +52,7 @@ class CMUMocapDataset(MocapDataset):
 
         CMU_cam_intrinsic = {
             'id': '1',
-            'center': np.array([0, 0], dtype='float32'),
+            'center': np.array([640, 360], dtype='float32'),
             'focal_length': np.array([1000, 1000], dtype='float32'),
             'radial_distortion': np.array([0, 0, 0], dtype='float32'),
             'tangential_distortion': np.array([0, 0], dtype='float32'),
