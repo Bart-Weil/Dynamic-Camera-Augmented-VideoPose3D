@@ -52,6 +52,8 @@ match args.dataset:
         dataset = HumanEvaDataset(dataset_path)
     case 'CMU':
         dataset = CMUMocapDataset(dataset_path)
+    case 'CMU_3DPW':
+        dataset = CMUMocapDataset(dataset_path, use_3DPW=True)
     case '3dpw':
         dataset = ThreeDPWDataset(dataset_path)
     case 'custom':
@@ -68,7 +70,7 @@ for subject in dataset.subjects():
         if 'positions' in anim:
             if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
                 pos_3d = anim['positions']
-                pos_3d[:, 1:] -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                pos_3d -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
             else:
                 positions_3d = []
@@ -109,9 +111,13 @@ for subject in dataset.subjects():
 for subject in keypoints.keys():
     for action in keypoints[subject]:
         if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
+            print(subject, action)
             kps = keypoints[subject][action]
             intrinsics = dataset.cameras()[subject][action]['intrinsics']
+            print(intrinsics)
+            print(kps)
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics['res_w'], h=intrinsics['res_h'])
+            print("normed:", kps)
             keypoints[subject][action] = [kps]
         else:
             for cam_idx, kps in enumerate(keypoints[subject][action]):
@@ -124,6 +130,7 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
     out_poses_3d = []
     out_poses_2d = []
     out_camera_params = []
+    print(keypoints.keys())
     for subject in subjects:
         for action in keypoints[subject].keys():
             if action_filter is not None:
@@ -410,7 +417,7 @@ def train(n_epochs, train_generator, test_generator,
                 inputs_3d = inputs_3d.cuda()
                 inputs_2d = inputs_2d.cuda()
                 inputs_cam = inputs_cam.cuda()
-            inputs_3d[:, :, 0] = 0
+            # inputs_3d[:, :, 0] = 0
 
             optimizer.zero_grad()
 
@@ -449,7 +456,7 @@ def train(n_epochs, train_generator, test_generator,
                         inputs_3d = inputs_3d.cuda()
                         inputs_2d = inputs_2d.cuda()
                         inputs_cam = inputs_cam.cuda()
-                    inputs_3d[:, :, 0] = 0
+                    # inputs_3d[:, :, 0] = 0
 
                     # Predict 3D poses
                     if isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
@@ -514,9 +521,9 @@ def train(n_epochs, train_generator, test_generator,
             
             plt.figure()
             epoch_x = np.arange(3, len(losses_3d_train)) + 1
-            plt.plot(epoch_x, losses_3d_train, color='C0')
-            plt.plot(epoch_x, losses_3d_valid, color='C1')
-            plt.legend(['3d train', '3d train (eval)', '3d valid (eval)'])
+            plt.plot(epoch_x, losses_3d_train[3:], color='C0')
+            plt.plot(epoch_x, losses_3d_valid[3:], color='C1')
+            plt.legend(['3d train', '3d valid'])
             plt.ylabel('MPJPE (m)')
             plt.xlabel('Epoch')
             plt.xlim((3, epoch))
@@ -633,7 +640,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
                 inputs_3d = inputs_3d.cuda()
                 inputs_cam = inputs_cam.cuda()
 
-            inputs_3d[:, :, 0] = 0    
+            # inputs_3d[:, :, 0] = 0
 
             # Positional model
             if isinstance(model_pos, TemporalModelBase):
@@ -685,6 +692,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
 if args.render:
     print('Rendering...')
+    print(keypoints[args.viz_subject].keys())
     input_keypoints = keypoints[args.viz_subject][args.viz_action][args.viz_camera].copy()
     ground_truth = None
     if args.viz_subject in dataset.subjects() and args.viz_action in dataset[args.viz_subject]:
@@ -732,6 +740,8 @@ if args.render:
 
             prediction = np.array(world_prediction_frames)
             ground_truth = np.array(world_gt_frames)
+            prediction[:, :, 2] -= np.min(prediction[:, :, 2])
+            ground_truth[:, :, 2] -= np.min(ground_truth[:, :, 2])
         else:
             # If the ground truth is not available, take the camera extrinsic params from a random subject.
             # They are almost the same, and anyway, we only need this for visualization purposes.

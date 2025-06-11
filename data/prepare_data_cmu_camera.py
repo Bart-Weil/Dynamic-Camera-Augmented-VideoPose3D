@@ -42,7 +42,7 @@ if __name__ == '__main__':
         positions_3d = {}
         cam_seqs = {}
 
-        for subject in tqdm(subjects[:30]):
+        for subject in tqdm(subjects):
             positions_3d[subject] = {}
             cam_seqs[subject] = {}
             # if benchmark flag set, only convert .pkl files containing _benchmark
@@ -55,7 +55,8 @@ if __name__ == '__main__':
             for f in file_list:
                 scene_file = open(f, "rb")
                 scene_data = pickle.load(scene_file)
-                positions = scene_data['pose_3d'].reshape(-1, 17, 3).astype('float32')
+                n_joints = scene_data['pose_3d'].shape[-2]
+                positions = scene_data['pose_3d'].reshape(-1, n_joints, 3).astype('float32')
 
                 positions_hom = np.concatenate([positions, 
                     np.ones((positions.shape[0], positions.shape[1], 1), dtype='float32')], axis=2)
@@ -64,7 +65,7 @@ if __name__ == '__main__':
 
                 cam_positions[:, :, 1] = -cam_positions[:, :, 1]
 
-                positions_3d[subject][f] = cam_positions
+                positions_3d[subject][f] = cam_positions.reshape(-1, n_joints, 3).astype('float32')
                 cam_seqs[subject][f] = scene_data['cam_sequence']
                 cam_seqs[subject][f]['pose_2d_flow'] = scene_data['pose_2d_flow'][..., :2]
 
@@ -94,17 +95,22 @@ if __name__ == '__main__':
             num_frames = len(cam_pose_frames)
             intrinsics = anim['cameras']['intrinsics']
             # Process each frame individually
-            for i in range(num_frames):
-                pos_3d_frame = np.array([cam_pose_frames[i]]).astype('float32')
-                # dataset.cam_intrinsics is a stacked numpy array of intrinsics used for project_to_2d_linear
-                pos_2d = wrap(project_to_2d_linear, pos_3d_frame, dataset.cam_intrinsics, unsqueeze=True)
-                pos_2d_pixel_space = image_coordinates(np.array([pos_2d]), w=intrinsics['res_w'], h=intrinsics['res_h'])
-                pos_2d_pixel_space = np.squeeze(pos_2d_pixel_space)
+            # for i in range(num_frames):
+            #     pos_3d_frame = np.array([cam_pose_frames[i]]).astype('float32')
+            #     # dataset.cam_intrinsics is a stacked numpy array of intrinsics used for project_to_2d_linear
+            #     pos_2d = wrap(project_to_2d_linear, pos_3d_frame, dataset.cam_intrinsics, unsqueeze=True)
+            #     pos_2d_pixel_space = image_coordinates(np.array([pos_2d]), w=intrinsics['res_w'], h=intrinsics['res_h'])
+            #     pos_2d_pixel_space = np.squeeze(pos_2d_pixel_space)
 
-                pos_2d_pixel_space += np.array([intrinsics['res_w']/2, intrinsics['res_h']/2])
-                positions_2d.append(pos_2d_pixel_space.astype('float32'))
+            #     # pos_2d_pixel_space += np.array([intrinsics['res_w']/2, intrinsics['res_h']/2])
+            #     positions_2d.append(pos_2d_pixel_space.astype('float32'))
+            positions_2d = np.array(positions_2d)
+            n_joints = np.array(scene_data['pose_2d']).shape[-2]
+            poses_2d = np.array(scene_data['pose_2d'])[:, :, :2].astype('float32').reshape(-1, n_joints, 2)
+            # positions_2d[:, :, 0] = intrinsics['res_w'] - positions_2d[:, :, 0]
+            poses_2d[:, :, 1] = intrinsics['res_h'] - poses_2d[:, :, 1]
 
-            output_2d_poses[subject][action] = np.array(positions_2d).astype('float32').reshape(-1, 17, 2)
+            output_2d_poses[subject][action] = np.array(poses_2d)
 
     print('Saving...')
     metadata = {

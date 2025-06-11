@@ -141,7 +141,7 @@ class CoupledTransformer(CamTransformerBase):
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
-            n_heads=n_heads,
+            nhead=n_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,

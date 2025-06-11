@@ -40,17 +40,18 @@ if __name__ == '__main__':
         output_2d_poses = {}
         cam_seqs = {}
         cam_intrinsics = {}
+        eval_data = {}
 
         for subject in tqdm(subjects):
             positions_3d[subject] = {}
             output_2d_poses[subject] = {}
             cam_seqs[subject] = {}
             cam_intrinsics[subject] = {}
+            eval_data[subject] = {}
             # if benchmark flag set, only convert .pkl files containing _benchmark
             file_list = glob(args.from_source + '/' + subject + '/*.pkl')
             
             for f in file_list:
-                print(f)
                 scene_file = open(f, "rb")
                 scene_data = pickle.load(scene_file, encoding='latin')
 
@@ -61,14 +62,14 @@ if __name__ == '__main__':
                 
                 cam_seq = np.array(scene_data['cam_poses'], dtype='float32')[:, :3, :]
                 intrinsic_mat = np.array(scene_data['cam_intrinsics'], dtype='float32')
+                # Normalise cam frame
                 for i in range(num_subjects):
                     joint_positions = joint_positions_subjects[i]
                     joint_detections = joint_detections_subjects[i][:, :2, :] # filter confidence scores
 
                     joint_positions = joint_positions.reshape(-1, 24, 3)
                     joint_detections = joint_detections.reshape(-1, 18, 2)
-
-                    print(joint_positions.shape)
+                    kp_flow = np.diff(joint_detections, axis=0)
 
                     positions_hom = np.concatenate([joint_positions, 
                         np.ones((joint_positions.shape[0], joint_positions.shape[1], 1), dtype='float32')], axis=2)
@@ -82,12 +83,16 @@ if __name__ == '__main__':
                     positions_3d[subject][action_name] = cam_positions
                     cam_seqs[subject][action_name] = cam_seq
                     cam_intrinsics[subject][action_name] = intrinsic_mat
-
+                    eval_data[subject][action_name] = {'pose_2d_flow': kp_flow}
                     output_2d_poses[subject][action_name] = joint_detections
 
 
         print('Saving...')
-        np.savez_compressed(output_filename, positions_3d=positions_3d, cam_seqs=cam_seqs, cam_intrinsics=cam_intrinsics)
+        np.savez_compressed(output_filename,
+                            positions_3d=positions_3d,
+                            cam_seqs=cam_seqs,
+                            cam_intrinsics=cam_intrinsics,
+                            eval_data=eval_data)
         dataset = ThreeDPWDataset(output_filename + '.npz')
         metadata = {
             'num_joints': dataset.skeleton_2d().num_joints(),

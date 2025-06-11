@@ -37,6 +37,7 @@ class ThreeDPWDataset(MocapDataset):
         pose_data = data['positions_3d'].item()
         cam_seqs = data['cam_seqs'].item()
         cam_intrinsics = data['cam_intrinsics'].item()
+        eval_data = data['eval_data'].item()
 
         self._data = {}
         self._cameras = {}
@@ -83,6 +84,7 @@ class ThreeDPWDataset(MocapDataset):
                 avg_cam_acceleration = np.mean(cam_accelerations, axis=0)
                 avg_cam_angular_velocity = np.mean(angular_velocities, axis=0)
                 avg_cam_angular_acceleration = np.mean(angular_accelerations, axis=0)
+                pose_2d_flow = eval_data[subject][action_name]['pose_2d_flow']
 
                 cam_intrinsic_dict = {
                     'id': '1',
@@ -100,7 +102,8 @@ class ThreeDPWDataset(MocapDataset):
                                       'cam_velocity': avg_cam_velocity,
                                       'cam_acceleration': avg_cam_acceleration,
                                       'cam_angular_velocity': avg_cam_angular_velocity,
-                                      'cam_angular_acceleration': avg_cam_angular_acceleration}
+                                      'cam_angular_acceleration': avg_cam_angular_acceleration,
+                                      'pose_2d_flow': pose_2d_flow}
 
                 # Store positions and the per-frame cameras in the same structure.
                 self._data[subject][action_name] = {

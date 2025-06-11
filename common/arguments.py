@@ -46,16 +46,16 @@ def parse_args():
 
     # Transformer arguments
     parser.add_argument('--d-model', dest='d_model', default=128, type=int, metavar='N', help='transformer embedding dimension')
-    parser.add_argument('--num-layers', dest='num_layers', default=1, type=int, metavar='N', help='number of transformer encoder layers')
+    parser.add_argument('--num-layers', dest='num_layers', default=2, type=int, metavar='N', help='number of transformer encoder layers')
     parser.add_argument('--n_heads', dest='n_heads', default=4, type=int, metavar='N', help='number of attention heads')
     parser.add_argument('--dim-feedforward', dest='dim_feedforward', default=128, type=int, metavar='N', help='feedforward network dimension in transformer layers')
-    parser.add_argument('--transformer-head-architecture', dest='transformer_head_architecture', default='128,128', type=str, metavar='X,Y,Z', 
+    parser.add_argument('--transformer-head-architecture', dest='transformer_head_architecture', default='128,128,128', type=str, metavar='X,Y,Z', 
                         help='layer sizes for transformer head separated by comma')
     parser.add_argument('--transformer-dropout', dest='transformer_dropout', default=0.25, type=float, metavar='P', help='transformer dropout probability')
 
     # Temporal FCN arguments
     parser.add_argument('-s', '--stride', default=1, type=int, metavar='N', help='chunk size to use during training')
-    parser.add_argument('--fcn-architecture', dest='fcn_architecture', default='3,3,3', type=str, metavar='LAYERS', help='temporal FCN filter widths separated by comma')
+    parser.add_argument('--fcn-architecture', dest='fcn_architecture', default='3,3,3,3,3', type=str, metavar='LAYERS', help='temporal FCN filter widths separated by comma')
     parser.add_argument('--causal', action='store_true', help='use causal convolutions for real-time processing')
     parser.add_argument('-ch', '--channels', default=1024, type=int, metavar='N', help='number of channels in convolution layers')
     parser.add_argument('--fcn-dropout', dest='fcn_dropout', default=0.25, type=float, metavar='P', help='temporal FCN dropout probability')

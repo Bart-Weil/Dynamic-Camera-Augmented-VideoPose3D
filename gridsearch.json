@@ -1,22 +1,34 @@
 {
     "LSTM-Coupled": [
+        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "lstm_cells": 1},
         {"learning_rate": 0.001, "learning_rate_decay": 0.99, "lstm_cells": 2},
         {"learning_rate": 0.001, "learning_rate_decay": 0.99, "lstm_cells": 3},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "lstm_cells": 1},
         {"learning_rate": 0.001, "learning_rate_decay": 0.95, "lstm_cells": 2},
         {"learning_rate": 0.001, "learning_rate_decay": 0.95, "lstm_cells": 3},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "lstm_cells": 2},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "lstm_cells": 3},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "lstm_cells": 1},
         {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "lstm_cells": 2},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "lstm_cells": 3}
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "lstm_cells": 3},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "lstm_cells": 1},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "lstm_cells": 2},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "lstm_cells": 3}
     ],
     "Transformer": [
-        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "n_heads": 4},
-        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "n_heads": 8},
-        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "n_heads": 4},
-        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "n_heads": 8},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "n_heads": 4},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "n_heads": 8},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "n_heads": 4},
-        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "n_heads": 8}
+        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "n_heads": 4, "num_layers": 2},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "n_heads": 4, "num_layers": 3},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "n_heads": 8, "num_layers": 2},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.99, "n_heads": 8, "num_layers": 3},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "n_heads": 4, "num_layers": 2},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "n_heads": 4, "num_layers": 3},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "n_heads": 8, "num_layers": 2},
+        {"learning_rate": 0.001, "learning_rate_decay": 0.95, "n_heads": 8, "num_layers": 3},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "n_heads": 4, "num_layers": 2},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "n_heads": 4, "num_layers": 3},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "n_heads": 8, "num_layers": 2},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.99, "n_heads": 8, "num_layers": 3},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "n_heads": 4, "num_layers": 2},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "n_heads": 4, "num_layers": 3},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "n_heads": 8, "num_layers": 2},
+        {"learning_rate": 0.0005, "learning_rate_decay":  0.95, "n_heads": 8, "num_layers": 3}
     ]
   }

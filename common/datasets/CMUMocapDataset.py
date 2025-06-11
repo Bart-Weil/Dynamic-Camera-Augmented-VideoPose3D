@@ -11,8 +11,21 @@ h36m_skeleton_nonstatic = Skeleton(
     joints_right=[1, 2, 3, 14, 15, 16]
 )
 
+coco_skeleton = Skeleton(
+    parents = [-1, 0, 1, 2, 3, 1, 2, 3, 1, 8, 9, 1, 11, 12, 0, 0, 14, 15],
+    joints_left = [2, 3, 4, 8, 9, 10, 14, 16],
+    joints_right = [5, 6, 7, 11, 12, 13, 15, 17]
+)
+
+smpl_skeleton = Skeleton(
+    parents = [-1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14,
+             16, 17, 18, 19, 20, 21],
+    joints_left = [2, 5, 8, 11, 14, 17, 19, 21, 23],
+    joints_right = [1, 4, 7, 10, 13, 16, 18, 20, 22]
+)
+
 class CMUMocapDataset(MocapDataset):
-    def __init__(self, path, remove_static_joints=True):
+    def __init__(self, path, use_3DPW=False, remove_static_joints=True):
         """
         Initializes the dataset.
         
@@ -21,7 +34,14 @@ class CMUMocapDataset(MocapDataset):
             extrinsics_path (str): Path to the npz file containing the 'cam_extrinsics' dict.
             remove_static_joints (bool): (Unused here) whether to remove static joints.
         """
-        super().__init__(fps=240, skeleton_2d=h36m_skeleton_nonstatic, skeleton_3d=h36m_skeleton_nonstatic)
+        if use_3DPW:
+            skeleton_2d=coco_skeleton
+            skeleton_3d=smpl_skeleton
+        else:
+            skeleton_2d=h36m_skeleton_nonstatic
+            skeleton_3d=h36m_skeleton_nonstatic
+
+        super().__init__(fps=240, skeleton_2d=skeleton_2d, skeleton_3d=skeleton_3d)
         data = np.load(path, allow_pickle=True)
 
         pose_data = data['positions_3d'].item()
