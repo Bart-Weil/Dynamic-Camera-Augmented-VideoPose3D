@@ -60,6 +60,13 @@ def parse_args():
     parser.add_argument('-ch', '--channels', default=1024, type=int, metavar='N', help='number of channels in convolution layers')
     parser.add_argument('--fcn-dropout', dest='fcn_dropout', default=0.25, type=float, metavar='P', help='temporal FCN dropout probability')
 
+    # Stacked Pose Lifter arguments
+    parser.add_argument('--stacked-num-layers', dest='stacked_num_layers', default=3, type=int, metavar='N', help='number of stacked layers in StackedPoseLifter')
+    parser.add_argument('--layer-size', dest='layer_size', default=256, type=int, metavar='N', help='number of features in each layer of StackedPoseLifter')
+    parser.add_argument('--stacked-pose-lifter-dropout', dest='stacked_pose_lifter_dropout', default=0.25, type=float, metavar='P', help='dropout probability in StackedPoseLifter')
+    parser.add_argument('--transformer-weights', dest='transformer_weights', default='', type=str, metavar='PATH', help='path to pre-trained transformer weights for StackedPoseLifter')
+    parser.add_argument('--fcn-weights', dest='fcn_weights', default='', type=str, metavar='PATH', help='path to pre-trained FCN weights for StackedPoseLifter')
+
     # Experimental
     parser.add_argument('--tune-hyperparameters', action='store_true', help='enable hyperparmeter tuning (search spaces per model defined at root/gridsearch.json)')
     parser.add_argument('-te', '--tuning-epochs', default=20, type=int, metavar='N', help='number of epochs for hyperparameter tuning')

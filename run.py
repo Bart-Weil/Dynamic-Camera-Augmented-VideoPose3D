@@ -22,6 +22,7 @@ from common.camera import *
 from common.models.TemporalModel import *
 from common.models.CamLSTM import *
 from common.models.CamTransformer import *
+from common.models.StackedPoseLifter import *
 from common.loss import *
 from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
@@ -70,7 +71,7 @@ for subject in dataset.subjects():
         if 'positions' in anim:
             if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
                 pos_3d = anim['positions']
-                pos_3d -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                # pos_3d -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
             else:
                 positions_3d = []
@@ -215,7 +216,7 @@ elif args.tune_hyperparameters:
 
 elif args.evaluate:
     if args.subjects_test:
-        subjects_test = args.subjects_test.split(',')
+        subjects_test = args.subjects_test.split(',') if args.subjects_test != "*" else list(dataset.subjects())
     elif args.viz_subject:
         subjects_test = [args.viz_subject]
     else:
@@ -237,6 +238,55 @@ if subjects_validate:
 print("Subjects: ", dataset.subjects())
 
 match args.model_name:
+    case 'StackedPoselifter':
+        receptive_field = 243
+        pad = (receptive_field - 1) // 2 # Padding on each side
+        if args.causal:
+            print('INFO: Using causal convolutions')
+            causal_shift = pad
+        else:
+            causal_shift = 0
+
+        # Parse the transformer head architecture
+        transformer_head_layers = [int(x) for x in args.transformer_head_architecture.split(',')]
+
+        transformer_hyperparams = {
+            'num_joints_in': poses_test_2d[0].shape[-2],
+            'in_features': poses_test_2d[0].shape[-1],
+            'num_joints_out': poses_test[0].shape[-2],
+            'out_features': poses_test[0].shape[-1],
+            'd_model': args.d_model,
+            'num_layers': args.num_layers,
+            'n_heads': args.n_heads,
+            'dim_feedforward': args.dim_feedforward,
+            'head_layers': transformer_head_layers,
+            'dropout': args.transformer_dropout
+        }
+
+        filter_widths = [int(x) for x in args.fcn_architecture.split(',')]
+
+        model_fcn = TemporalModel(poses_test_2d[0].shape[-2], poses_test_2d[0].shape[-1], dataset.skeleton_3d().num_joints(),
+                                        filter_widths=filter_widths, causal=args.causal, dropout=args.fcn_dropout, channels=args.channels,
+                                        dense=args.dense)
+        
+        model_transformer = CoupledTransformer(**transformer_hyperparams)
+
+        model_pos_train = StackedPoseLifter(dataset.skeleton_3d().num_joints(), poses_test[0].shape[-1], args.stacked_num_layers, args.layer_size,
+                                            args.stacked_pose_lifter_dropout)
+        
+        model_pos = StackedPoseLifter(dataset.skeleton_3d().num_joints(), poses_test[0].shape[-1], args.stacked_num_layers, args.layer_size,
+                                            args.stacked_pose_lifter_dropout)
+        
+        print('Loading transformer checkpoint from:', args.transformer_weights)
+        transformer_checkpoint = torch.load(args.transformer_weights, map_location=lambda storage, loc: storage, weights_only=False)
+        print('Transformer was trained for {} epochs'.format(transformer_checkpoint['epoch']))
+        model_transformer.load_state_dict(transformer_checkpoint['model_pos'])
+
+        print('Loading FCN checkpoint from:', args.fcn_weights)
+        fcn_checkpoint = torch.load(args.fcn_weights, map_location=lambda storage, loc: storage, weights_only=False)
+        print('This model was trained for {} epochs'.format(transformer_checkpoint['epoch']))
+        model_fcn.load_state_dict(fcn_checkpoint['model_pos'])
+
     case 'FCN':
         filter_widths = [int(x) for x in args.fcn_architecture.split(',')]
         
@@ -356,6 +406,10 @@ if torch.cuda.is_available():
     print("INFO: using CUDA")
     model_pos = model_pos.cuda()
     model_pos_train = model_pos_train.cuda()
+
+    if args.model_name == "StackedPoselifter":
+        model_fcn = model_fcn.cuda()
+        model_transformer = model_transformer.cuda()
 else:
     print("INFO: CUDA unavailable")
     
@@ -422,6 +476,11 @@ def train(n_epochs, train_generator, test_generator,
                 predicted_3d_pos = model_pos_train(inputs_2d, inputs_cam)
             elif isinstance(model_pos_train, TemporalModelBase):
                 predicted_3d_pos = model_pos_train(inputs_2d)
+            elif isinstance(model_pos_train, StackedPoseLifter):
+                with torch.no_grad():
+                    transformer_predicted_3d_pos = model_transformer(inputs_2d, inputs_cam)
+                    fcn_predicted_3d_pos = model_fcn(inputs_2d)
+                predicted_3d_pos = model_pos_train(transformer_predicted_3d_pos, fcn_predicted_3d_pos)
 
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
             epoch_loss_3d_train += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
@@ -460,7 +519,13 @@ def train(n_epochs, train_generator, test_generator,
                                                                       test_generator.seq_length)
                     elif isinstance(model_pos, TemporalModelBase):
                         predicted_3d_pos = model_pos(inputs_2d)
-
+                    elif isinstance(model_pos, StackedPoseLifter):
+                        transformer_predicted_3d_pos = model_transformer.sliding_window(inputs_2d, inputs_cam,
+                                                                        test_generator.seq_length)
+                        fcn_predicted_3d_pos = model_fcn(inputs_2d)
+                        predicted_3d_pos = model_pos(transformer_predicted_3d_pos.squeeze(),
+                                                     fcn_predicted_3d_pos.squeeze())
+                        predicted_3d_pos = predicted_3d_pos.view(inputs_3d.shape)
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_valid += inputs_3d.shape[0]*inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0]*inputs_3d.shape[1]
@@ -597,6 +662,8 @@ elif not args.evaluate:
 
     lr = args.learning_rate
 
+    print(model_pos_train)
+
     optimizer = optim.Adam(model_pos_train.parameters(), lr=lr, amsgrad=True)
         
     lr_decay = args.lr_decay
@@ -620,6 +687,11 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
     cam_info_per_seq = []
     pose_motion_per_seq = []
+    
+    # Ensemble metrics
+    fcn_diffs = []
+    transformer_diffs = []
+
     e1_per_seq = []
 
     with torch.no_grad():
@@ -642,8 +714,24 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             # Positional model
             if isinstance(model_pos, TemporalModelBase):
                 predicted_3d_pos = model_pos(inputs_2d)
-            else:
+            elif isinstance(model_pos, (CamLSTMBase, CamTransformerBase)):
                 predicted_3d_pos = model_pos.sliding_window(inputs_2d, inputs_cam, test_generator.seq_length)
+            elif isinstance(model_pos, StackedPoseLifter):
+                transformer_predicted_3d_pos = model_transformer.sliding_window(inputs_2d, inputs_cam,
+                                                                test_generator.seq_length)
+                fcn_predicted_3d_pos = model_fcn(inputs_2d)
+                predicted_3d_pos = model_pos(transformer_predicted_3d_pos.squeeze(),
+                                                fcn_predicted_3d_pos.squeeze())
+                predicted_3d_pos = predicted_3d_pos.view(inputs_3d.shape)
+
+                fcn_pred_batch = fcn_predicted_3d_pos.reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1]).cpu().numpy()
+                transformer_pred_batch = transformer_predicted_3d_pos.reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1]).cpu().numpy()
+                stacked_pred_batch = predicted_3d_pos.reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1]).cpu().numpy()
+
+                fcn_diff = p_mpjpe(fcn_pred_batch, stacked_pred_batch)
+                transformer_diff = p_mpjpe(transformer_pred_batch, stacked_pred_batch)
+                fcn_diffs.append(fcn_diff.item())
+                transformer_diffs.append(transformer_diff.item())
                 
             if return_predictions:
                 return predicted_3d_pos.squeeze(0).cpu().numpy()
@@ -688,7 +776,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     print('----------')
 
     # Return metrics and cam v, omega to use for action wise correlation
-    return e1, e2, e3, ev, e1_per_seq, cam_info_per_seq, pose_motion_per_seq
+    return e1, e2, e3, ev, e1_per_seq, cam_info_per_seq, pose_motion_per_seq, fcn_diffs, transformer_diffs
 
 
 if args.render:
@@ -817,6 +905,9 @@ else:
         errors_p3 = []
         errors_vel = []
         
+        fcn_diffs = []
+        transformer_diffs = []
+
         e1_actions = []
         cam_info_actions = []
         pose_motion = []
@@ -835,12 +926,15 @@ else:
             gen = UnchunkedGenerator(cams_act, poses_act, poses_2d_act,
                                      pad=pad, causal_shift=causal_shift,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-            e1, e2, e3, ev, e1_per_action, cam_info_per_action, pose_motion_per_action = evaluate(gen, action_key)
+            e1, e2, e3, ev, e1_per_action, cam_info_per_action, pose_motion_per_action, fcn_diffs, transformer_diffs = evaluate(gen, action_key)
             errors_p1.append(e1)
             errors_p2.append(e2)
             errors_p3.append(e3)
             errors_vel.append(ev)
             
+            fcn_diffs += fcn_diffs
+            transformer_diffs += transformer_diffs
+
             e1_actions += e1_per_action
             cam_info_actions += cam_info_per_action
             pose_motion += pose_motion_per_action
@@ -883,6 +977,10 @@ else:
         print('PMCC     (MPJPE and cam angular velocity):', cam_angular_velocity_r)
         print('PMCC (MPJPE and cam angular acceleration):', cam_angular_acceleration_r)
         print('PMCC              (MPJPE and Pose Motion):', pose_motion_r)
+
+        if args.model_name == 'StackedPoselifter':
+            print('FCN Diff                        (P-MPJPE):', np.mean(fcn_diffs), 'mm')
+            print('Transformer Diff                (P-MPJPE):', np.mean(transformer_diffs), 'mm')
 
     if not args.by_subject:
         run_evaluation(all_actions, action_filter)

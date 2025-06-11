@@ -21,8 +21,8 @@ from common.datasets.CMUMocapDataset import CMUMocapDataset
 from common.camera import world_to_camera, image_coordinates, normalize_screen_coordinates, project_to_2d, project_to_2d_linear
 from common.utils import wrap
 
-output_filename = '/vol/bitbucket/bw1222/data/npz/data_3d_CMU'
-output_filename_2d = '/vol/bitbucket/bw1222/data/npz/data_2d_CMU_gt'
+output_filename = '/vol/bitbucket/bw1222/data/npz/data_3d_CMU_3DPW'
+output_filename_2d = '/vol/bitbucket/bw1222/data/npz/data_2d_CMU_3DPW_gt'
 
 if __name__ == '__main__':
     if os.path.basename(os.getcwd()) != 'data':
