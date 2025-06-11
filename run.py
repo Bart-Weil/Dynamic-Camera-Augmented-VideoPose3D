@@ -111,13 +111,9 @@ for subject in dataset.subjects():
 for subject in keypoints.keys():
     for action in keypoints[subject]:
         if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
-            print(subject, action)
             kps = keypoints[subject][action]
             intrinsics = dataset.cameras()[subject][action]['intrinsics']
-            print(intrinsics)
-            print(kps)
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=intrinsics['res_w'], h=intrinsics['res_h'])
-            print("normed:", kps)
             keypoints[subject][action] = [kps]
         else:
             for cam_idx, kps in enumerate(keypoints[subject][action]):
@@ -623,6 +619,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     epoch_loss_3d_vel = 0
 
     cam_info_per_seq = []
+    pose_motion_per_seq = []
     e1_per_seq = []
 
     with torch.no_grad():
@@ -659,6 +656,10 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             
             e1_per_seq.append(error.cpu().numpy())
             cam_info_per_seq.append(seq_info)
+            pose_motion = np.linalg.norm(np.diff(batch, axis=1), axis=-1)
+
+            pose_motion = np.mean(pose_motion.squeeze(), axis=(0, 1))
+            pose_motion_per_seq.append(pose_motion)
 
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
             
@@ -687,7 +688,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     print('----------')
 
     # Return metrics and cam v, omega to use for action wise correlation
-    return e1, e2, e3, ev, e1_per_seq, cam_info_per_seq
+    return e1, e2, e3, ev, e1_per_seq, cam_info_per_seq, pose_motion_per_seq
 
 
 if args.render:
@@ -818,6 +819,7 @@ else:
         
         e1_actions = []
         cam_info_actions = []
+        pose_motion = []
 
         for action_key in actions.keys():
             if action_filter is not None:
@@ -833,7 +835,7 @@ else:
             gen = UnchunkedGenerator(cams_act, poses_act, poses_2d_act,
                                      pad=pad, causal_shift=causal_shift,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
-            e1, e2, e3, ev, e1_per_action, cam_info_per_action = evaluate(gen, action_key)
+            e1, e2, e3, ev, e1_per_action, cam_info_per_action, pose_motion_per_action = evaluate(gen, action_key)
             errors_p1.append(e1)
             errors_p2.append(e2)
             errors_p3.append(e3)
@@ -841,6 +843,7 @@ else:
             
             e1_actions += e1_per_action
             cam_info_actions += cam_info_per_action
+            pose_motion += pose_motion_per_action
 
         cam_velocities = np.linalg.norm(np.array([cam_info['cam_velocity']
             for cam_info in cam_info_actions]), axis=1)
@@ -850,12 +853,8 @@ else:
             for cam_info in cam_info_actions]), axis=1)
         cam_angular_accelerations = np.linalg.norm(np.array([cam_info['cam_angular_acceleration']
             for cam_info in cam_info_actions]), axis=1)
-        kp_flow = np.array([cam_info['pose_2d_flow']
-            for cam_info in cam_info_actions])
 
-        norm_kp_flow = np.linalg.norm(kp_flow, axis=-1)
-
-        norm_kp_flow_per_joint_per_frame = np.mean(norm_kp_flow, axis=(1,2))
+        pose_motion = np.array(pose_motion)
 
         e1_actions_arr = np.array(e1_actions)
 
@@ -866,14 +865,14 @@ else:
             cam_accelerations,
             cam_angular_velocities, 
             cam_angular_accelerations,
-            norm_kp_flow_per_joint_per_frame], axis=1)
+            pose_motion], axis=1)
 
         corr_matrix = np.corrcoef(corr_data)
         cam_velocity_r = corr_matrix[0, 1]
         cam_acceleration_r = corr_matrix[0, 2]
         cam_angular_velocity_r = corr_matrix[0, 3]
         cam_angular_acceleration_r = corr_matrix[0, 4]
-        kp_flow_r = corr_matrix[0, 5]
+        pose_motion_r = corr_matrix[0, 5]
 
         print('Protocol #1   (MPJPE) action-wise average:', round(np.mean(errors_p1), 1), 'mm')
         print('Protocol #2 (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
@@ -883,7 +882,7 @@ else:
         print('PMCC         (MPJPE and cam acceleration):', cam_acceleration_r)
         print('PMCC     (MPJPE and cam angular velocity):', cam_angular_velocity_r)
         print('PMCC (MPJPE and cam angular acceleration):', cam_angular_acceleration_r)
-        print('PMCC (MPJPE and KP Flow):', kp_flow_r)
+        print('PMCC              (MPJPE and Pose Motion):', pose_motion_r)
 
     if not args.by_subject:
         run_evaluation(all_actions, action_filter)
