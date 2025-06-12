@@ -68,34 +68,37 @@ if __name__ == '__main__':
 
                 joint_positions_subjects = np.array(scene_data['jointPositions'], dtype='float32')
                 joint_detections_subjects = np.array(scene_data['poses2d'], dtype='float32')
-                print(joint_detections_subjects.shape)
-                print(joint_positions_subjects.shape)
+
                 num_subjects = joint_positions_subjects.shape[0]
-                
-                cam_seq = np.array(scene_data['cam_poses'], dtype='float32')[:, :3, :]
+                # Axis permutation matrix (swap y and z)
+                cam_seq = upsample_linear(np.array(scene_data['cam_poses'], dtype='float32')[:, :3, :]) # (T, 3, 4)
+
                 intrinsic_mat = np.array(scene_data['cam_intrinsics'], dtype='float32')
                 # Normalise cam frame
                 for i in range(num_subjects):
                     joint_positions = joint_positions_subjects[i]
                     joint_detections = joint_detections_subjects[i] # filter confidence scores
 
-                    joint_positions = joint_positions.reshape(-1, 24, 3)
+                    joint_positions = upsample_linear(joint_positions.reshape(-1, 24, 3))  # (T, 24, 3)
 
                     positions_hom = np.concatenate([joint_positions, 
                         np.ones((joint_positions.shape[0], joint_positions.shape[1], 1), dtype='float32')], axis=2)
 
                     cam_positions = np.einsum('tij,tnj->tni', cam_seq, positions_hom)
 
-                    cam_positions[:, :, 1] = -cam_positions[:, :, 1]
-
                     action_name = f.removesuffix('.pkl') + f'_{i}'
 
-                    positions_3d[subject][action_name] = upsample_linear(cam_positions)
-                    cam_seqs[subject][action_name] = upsample_linear(cam_seq)
+                    positions_3d[subject][action_name] = cam_positions
+                    cam_seqs[subject][action_name] = cam_seq
                     cam_intrinsics[subject][action_name] = intrinsic_mat
 
                     output_2d_poses[subject][action_name] = upsample_linear(np.transpose(joint_detections, (0, 2, 1))[:, :, :2])
-                    print(repr(output_2d_poses[subject][action_name][20]))
+
+                    # compare 2d poses with projected 3d poses
+                    pose_3d_projected = np.einsum('tij,tnj->tni', np.array([intrinsic_mat for i in range(cam_positions.shape[0])]), cam_positions)
+                    pose_3d_projected = pose_3d_projected[:, :, :2] / pose_3d_projected[:, :, 2:3]
+                    pose_3d_projected = pose_3d_projected.reshape(-1, 24, 2)
+                    
 
         print('Saving...')
         np.savez_compressed(output_filename,

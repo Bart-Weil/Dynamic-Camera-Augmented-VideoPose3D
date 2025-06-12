@@ -70,7 +70,7 @@ for subject in dataset.subjects():
         if 'positions' in anim:
             if isinstance(dataset, (ThreeDPWDataset, CMUMocapDataset)):
                 pos_3d = anim['positions']
-                # pos_3d -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
+                pos_3d -= pos_3d[:, :1] # Remove global offset, but keep trajectory in first position
                 anim['positions_3d'] = [pos_3d]
             else:
                 positions_3d = []
@@ -810,14 +810,23 @@ if args.render:
                 prediction_frame = prediction_frames[i]
                 gt_frame = gt_frames[i]
 
-                prediction_frame[:, 1] = -prediction_frame[:, 1]
-                gt_frame[:, 1] = -gt_frame[:, 1]
+                if args.dataset == '3DPW':
+                    cam_extrinsic = cams['extrinsics'][i]
+                    cam_orientation = cam_extrinsic[:, :3]
+                    cam_translation = -cam_orientation.T @ cam_extrinsic[:, 3]
+                    world_prediction = (prediction_frames[i] @ cam_orientation) + cam_translation
+                    world_gt = (gt_frames[i] @ cam_orientation) + cam_translation
+                    world_gt = world_gt[:, [0, 2, 1]]  # 3DPW has Y and Z swapped
+                    world_prediction = world_prediction[:, [0, 2, 1]]  # 3DPW has Y and Z swapped
 
-                cam_extrinsic = cams['extrinsics'][i]
-                cam_orientation = cam_extrinsic[:, :3]
-                cam_translation = -cam_orientation.T @ cam_extrinsic[:, 3]
-                world_prediction = (prediction_frames[i] @ cam_orientation) + cam_translation
-                world_gt = (gt_frames[i] @ cam_orientation) + cam_translation
+                else:
+                    prediction_frame[:, 1] = -prediction_frame[:, 1]
+                    gt_frame[:, 1] = -gt_frame[:, 1]
+                    cam_extrinsic = cams['extrinsics'][i]
+                    cam_orientation = cam_extrinsic[:, :3]
+                    cam_translation = -cam_orientation.T @ cam_extrinsic[:, 3]
+                    world_prediction = (prediction_frames[i] @ cam_orientation) + cam_translation
+                    world_gt = (gt_frames[i] @ cam_orientation) + cam_translation
 
                 world_prediction_frames.append(world_prediction)
                 world_gt_frames.append(world_gt)
@@ -847,7 +856,7 @@ if args.render:
         render_animation(input_keypoints, keypoints_metadata, anim_output,
                          dataset.skeleton_2d(), dataset.skeleton_3d(), dataset.fps(), args.viz_bitrate, cam_intrinsics['azimuth'],
                          args.viz_output, limit=args.viz_limit, downsample=args.viz_downsample, size=args.viz_size,
-                         input_video_path=args.viz_video, viewport=(cam_intrinsics['res_w'], cam_intrinsics['res_h']),
+                         input_video_path=args.viz_video, viewport=(int(cam_intrinsics['res_w']), int(cam_intrinsics['res_h'])),
                          input_video_skip=args.viz_skip)
     
 else:
