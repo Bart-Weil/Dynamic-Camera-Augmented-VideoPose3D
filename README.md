@@ -11,8 +11,6 @@
 
 [Overview](#why-dynamic-cameras) · [Models](#models) · [Results](#project-results) · [Quick start](#quick-start) · [Documentation](#documentation)
 
-<img src="images/demo_h36m.gif" alt="VideoPose3D reconstruction demo" width="760">
-
 </div>
 
 ## Why dynamic cameras?
