@@ -4,11 +4,6 @@
 
 ### 2D-to-3D human pose lifting that learns from camera motion
 
-[![Research project](https://img.shields.io/badge/status-research_project-6f42c1?style=flat-square)](#research-status)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-models-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC_BY--NC_4.0-lightgrey?style=flat-square)](LICENSE)
-
 [Overview](#why-dynamic-cameras) · [Models](#models) · [Results](#project-results) · [Quick start](#quick-start) · [Documentation](#documentation)
 
 </div>
